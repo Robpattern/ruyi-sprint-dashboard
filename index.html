@@ -194,6 +194,7 @@ const MEMBER_COLORS = {
 let currentTab = 0;
 let sprintSlots = [];   // [{list, role:'review'|'active'|'planning'}]
 let charts = {};
+let cachedTasks = {}; // panelId -> tasks array
 let syncedAt = null;
 
 /* ══════════════════════════════════════════
@@ -393,7 +394,7 @@ function updateHeader(idx) {
 /* ══════════════════════════════════════════
    RENDER — REVIEW (past sprint)
 ══════════════════════════════════════════ */
-function renderReview(panelId, s, tasks) {
+function renderReview(panelId, s, tasks, showBackBtn = false) {
   tasks = tasks.filter(t => !isTest(t));
   const el = document.getElementById(panelId);
 
@@ -417,11 +418,14 @@ function renderReview(panelId, s, tasks) {
   el.innerHTML = `
     <div class="grid">
       <div class="card full">
-        <div class="chip-row">
-          <div class="chip c-gray"><div class="n">${tasks.length}</div><div class="lbl">Total Tasks</div></div>
-          <div class="chip c-green"><div class="n">${closed.length}</div><div class="lbl">Completed</div></div>
-          <div class="chip c-purple"><div class="n">${totalPts}</div><div class="lbl">Sprint Points</div></div>
-          <div class="chip c-yellow"><div class="n">${Math.round(closedPts/Math.max(totalPts,1)*100)}%</div><div class="lbl">% Done</div></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div class="chip-row" style="flex:1">
+            <div class="chip c-gray"><div class="n">${tasks.length}</div><div class="lbl">Total Tasks</div></div>
+            <div class="chip c-green"><div class="n">${closed.length}</div><div class="lbl">Completed</div></div>
+            <div class="chip c-purple"><div class="n">${totalPts}</div><div class="lbl">Sprint Points</div></div>
+            <div class="chip c-yellow"><div class="n">${Math.round(closedPts/Math.max(totalPts,1)*100)}%</div><div class="lbl">% Done</div></div>
+          </div>
+          ${showBackBtn ? `<button onclick="toggleViewMode('${panelId}', sprintSlots[${sprintSlots.findIndex(x=>x.id===s.id)}], cachedTasks['${panelId}'])" style="margin-left:14px;padding:6px 14px;border-radius:8px;border:1px solid #e2e8f0;background:white;font-size:12px;font-weight:600;cursor:pointer;color:#475569;white-space:nowrap">⚡ Active View</button>` : ''}
         </div>
       </div>
 
@@ -494,6 +498,17 @@ function renderReview(panelId, s, tasks) {
 }
 
 /* ══════════════════════════════════════════
+   VIEW MODE TOGGLE (active sprints)
+══════════════════════════════════════════ */
+const panelViewMode = {}; // panelId -> 'active' | 'review'
+
+function toggleViewMode(panelId, s, tasks) {
+  panelViewMode[panelId] = panelViewMode[panelId] === 'review' ? 'active' : 'review';
+  if (panelViewMode[panelId] === 'review') renderReview(panelId, s, tasks, true);
+  else renderActive(panelId, s, tasks);
+}
+
+/* ══════════════════════════════════════════
    RENDER — ACTIVE sprint
 ══════════════════════════════════════════ */
 function renderActive(panelId, s, tasks) {
@@ -523,14 +538,18 @@ function renderActive(panelId, s, tasks) {
   const statusOrder = {'in progress':0,'prioritized':1,'blocked':2,'closed':3};
   const sorted = [...tasks].sort((a,b)=>(statusOrder[getStatus(a)]??4)-(statusOrder[getStatus(b)]??4));
 
+  panelViewMode[panelId] = 'active';
   el.innerHTML = `
     <div class="grid">
       <div class="card full">
-        <div class="chip-row">
-          <div class="chip c-green"><div class="n">${tasks.length}</div><div class="lbl">Tasks</div></div>
-          <div class="chip c-purple"><div class="n">${totalPts}</div><div class="lbl">Sprint Points</div></div>
-          <div class="chip c-yellow"><div class="n">${pctDone}%</div><div class="lbl">% Complete</div></div>
-          <div class="chip c-gray"><div class="n">${totalPts-closedPts}</div><div class="lbl">Pts Remaining</div></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div class="chip-row" style="flex:1">
+            <div class="chip c-green"><div class="n">${tasks.length}</div><div class="lbl">Tasks</div></div>
+            <div class="chip c-purple"><div class="n">${totalPts}</div><div class="lbl">Sprint Points</div></div>
+            <div class="chip c-yellow"><div class="n">${pctDone}%</div><div class="lbl">% Complete</div></div>
+            <div class="chip c-gray"><div class="n">${totalPts-closedPts}</div><div class="lbl">Pts Remaining</div></div>
+          </div>
+          <button onclick="toggleViewMode('${panelId}', sprintSlots[${sprintSlots.findIndex(x=>x.id===s.id)}], cachedTasks['${panelId}'])" style="margin-left:14px;padding:6px 14px;border-radius:8px;border:1px solid #e2e8f0;background:white;font-size:12px;font-weight:600;cursor:pointer;color:#475569;white-space:nowrap">📉 Review View</button>
         </div>
       </div>
 
@@ -698,6 +717,7 @@ async function syncNow() {
       const panelId = `panel-${i}`;
       const tasks   = taskArrays[i] || [];
       const prevTasks = i > 0 ? taskArrays[i-1] : [];
+      cachedTasks[panelId] = tasks;
       if (s.role === 'review')   renderReview(panelId, s, tasks);
       if (s.role === 'active')   renderActive(panelId, s, tasks);
       if (s.role === 'planning') renderPlanning(panelId, s, tasks, prevTasks, blTasks);
