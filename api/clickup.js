@@ -5,7 +5,7 @@
  * Usage: GET /api/clickup?path=/v2/view/ID/task&page=0
  *        GET /api/clickup?path=/v2/task/TASK_ID
  */
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   const apiKey = process.env.CLICKUP_API_KEY;
   if (!apiKey) {
     return res.status(500).json({ error: 'CLICKUP_API_KEY environment variable is not set.' });
