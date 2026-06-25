@@ -281,7 +281,11 @@ async function getBoardViewId(listId) {
   try {
     const d = await api(`/v2/list/${listId}/view`);
     const views = d.views || [];
-    const board = views.find(v => v.type === 'board') || views[0];
+    // Only use view types that support the /task endpoint
+    const VALID_TYPES = new Set(['board', 'list', 'calendar', 'gantt', 'activity', 'workload']);
+    const board = views.find(v => v.type === 'board')
+      || views.find(v => v.type === 'list')
+      || views.find(v => VALID_TYPES.has(v.type));
     return board?.id || null;
   } catch { return null; }
 }
