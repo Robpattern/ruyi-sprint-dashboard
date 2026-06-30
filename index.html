@@ -452,17 +452,36 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
   const ptsEntries = Object.entries(ptsByA).sort((a,b)=>b[1]-a[1]);
   const colors = ptsEntries.map(([n]) => memberColor(n));
 
+  // Per-assignee breakdown: closed / blocked / in-progress pts
+  const blockedPtsByA = {}, inProgPtsByA = {}, otherPtsByA = {};
+  tasks.forEach(t => {
+    const pts = getPoints(t);
+    const sl  = getStatus(t);
+    (t.assignees||[]).forEach(a => {
+      const n = a.username||'?';
+      if (sl === 'blocked')     blockedPtsByA[n] = (blockedPtsByA[n]||0) + pts;
+      else if (sl === 'in progress') inProgPtsByA[n] = (inProgPtsByA[n]||0) + pts;
+      else if (sl !== 'closed') otherPtsByA[n]   = (otherPtsByA[n]  ||0) + pts;
+    });
+  });
+
   // Build commitment rows using planned values when available
   const commitNames = Object.keys(plannedMap).length
     ? Object.keys(plannedMap)
     : Object.keys(ptsByA);
   const commitRows = commitNames.map(nameKey => {
-    const planned  = plannedMap[nameKey] ?? ptsByA[nameKey.toLowerCase()] ?? 0;
-    const delivered = closedPtsByA[Object.keys(closedPtsByA).find(k=>k.toLowerCase()===nameKey.toLowerCase())||''] || 0;
-    const delta = delivered - planned;
+    const lk        = nameKey.toLowerCase();
+    const findKey   = obj => Object.keys(obj).find(k => k.toLowerCase() === lk) || '';
+    const planned   = plannedMap[nameKey] ?? ptsByA[findKey(ptsByA)] ?? 0;
+    const delivered = closedPtsByA[findKey(closedPtsByA)] || 0;
+    const bPts      = blockedPtsByA[findKey(blockedPtsByA)] || 0;
+    const iPts      = inProgPtsByA[findKey(inProgPtsByA)]  || 0;
+    const oPts      = otherPtsByA[findKey(otherPtsByA)]    || 0;
+    const accounted = delivered + bPts + iPts + oPts;
+    const delta     = delivered - planned;
     const displayName = nameKey.split(' ')[0].charAt(0).toUpperCase() + nameKey.split(' ')[0].slice(1);
-    const color = memberColor(nameKey.toLowerCase());
-    return { displayName, planned, delivered, delta, color };
+    const color = memberColor(lk);
+    return { displayName, planned, delivered, bPts, iPts, oPts, accounted, delta, color };
   });
 
   el.innerHTML = `
@@ -500,23 +519,35 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
 
       <div class="card">
         <div class="card-title">📊 Commitment vs Delivery</div>
-        ${commitRows.map(({displayName, planned, delivered, delta, color}) => {
-          const pct = Math.round(delivered/Math.max(planned,1)*100);
-          const deltaColor = delta >= 0 ? '#059669' : '#dc2626';
-          const deltaLabel = delta > 0 ? `+${delta}` : `${delta}`;
+        ${commitRows.map(({displayName, planned, delivered, bPts, iPts, oPts, accounted, delta, color}) => {
+          const base      = Math.max(planned, accounted, 1);
+          const dPct      = Math.min(Math.round(delivered/base*100), 100);
+          const bPct      = Math.min(Math.round(bPts/base*100), 100 - dPct);
+          const iPct      = Math.min(Math.round(iPts/base*100), 100 - dPct - bPct);
+          const deltaColor= delta >= 0 ? '#059669' : '#dc2626';
+          const deltaLabel= delta > 0 ? `+${delta}` : `${delta}`;
+          const pct       = Math.round(delivered/Math.max(planned,1)*100);
+          // breakdown tags
+          const tags = [];
+          if (delivered) tags.push(`<span style="color:#059669;font-weight:600">✅ ${delivered}pt done</span>`);
+          if (bPts)      tags.push(`<span style="color:#dc2626;font-weight:600">🚫 ${bPts}pt blocked</span>`);
+          if (iPts)      tags.push(`<span style="color:#2563eb;font-weight:600">🔵 ${iPts}pt in progress</span>`);
+          if (oPts)      tags.push(`<span style="color:#d97706;font-weight:600">⏳ ${oPts}pt other</span>`);
           return `
-          <div style="margin-bottom:14px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <div style="margin-bottom:16px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
               <div style="display:flex;align-items:center;gap:6px">
                 <div class="av" style="background:${color};width:22px;height:22px;font-size:9px">${displayName[0]}</div>
-                <span style="font-size:12px;font-weight:600">${displayName}</span>
+                <span style="font-size:13px;font-weight:700">${displayName}</span>
               </div>
-              <span style="font-size:11px;color:#64748b">${delivered}/${planned}pt &nbsp;<span style="font-weight:700;color:${deltaColor}">(${deltaLabel})</span></span>
+              <span style="font-size:11px;color:#64748b">${delivered}/${planned}pt committed &nbsp;<span style="font-weight:700;color:${deltaColor}">(${deltaLabel})</span></span>
             </div>
-            <div style="height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden;position:relative">
-              <div style="height:100%;width:${Math.min(pct,100)}%;background:${color};border-radius:4px;opacity:${delivered>=planned?1:0.7}"></div>
+            <div style="height:10px;background:#f1f5f9;border-radius:5px;overflow:hidden;display:flex">
+              <div style="height:100%;width:${dPct}%;background:${color};transition:width .4s"></div>
+              <div style="height:100%;width:${bPct}%;background:#ef4444;transition:width .4s"></div>
+              <div style="height:100%;width:${iPct}%;background:#3b82f6;transition:width .4s"></div>
             </div>
-            <div style="font-size:10px;color:#94a3b8;margin-top:2px">${pct}% delivered</div>
+            <div style="font-size:10px;color:#64748b;margin-top:4px;display:flex;gap:10px;flex-wrap:wrap">${tags.join('')}</div>
           </div>`;
         }).join('')}
       </div>
