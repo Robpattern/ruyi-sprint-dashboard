@@ -453,16 +453,24 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
   const ptsEntries = Object.entries(ptsByA).sort((a,b)=>b[1]-a[1]);
   const colors = ptsEntries.map(([n]) => memberColor(n));
 
-  // Per-assignee breakdown: closed / blocked / in-progress pts
+  // Per-assignee breakdown: closed / blocked / in-progress pts + task lists
   const blockedPtsByA = {}, inProgPtsByA = {}, otherPtsByA = {};
+  const blockedTasksByA = {}, inProgTasksByA = {}, otherTasksByA = {};
   tasks.forEach(t => {
     const pts = getPoints(t);
     const sl  = getStatus(t);
     (t.assignees||[]).forEach(a => {
       const n = a.username||'?';
-      if (sl === 'blocked')     blockedPtsByA[n] = (blockedPtsByA[n]||0) + pts;
-      else if (sl === 'in progress') inProgPtsByA[n] = (inProgPtsByA[n]||0) + pts;
-      else if (sl !== 'closed') otherPtsByA[n]   = (otherPtsByA[n]  ||0) + pts;
+      if (sl === 'blocked') {
+        blockedPtsByA[n] = (blockedPtsByA[n]||0) + pts;
+        (blockedTasksByA[n] = blockedTasksByA[n]||[]).push(t);
+      } else if (sl === 'in progress') {
+        inProgPtsByA[n] = (inProgPtsByA[n]||0) + pts;
+        (inProgTasksByA[n] = inProgTasksByA[n]||[]).push(t);
+      } else if (sl !== 'closed') {
+        otherPtsByA[n] = (otherPtsByA[n]||0) + pts;
+        (otherTasksByA[n] = otherTasksByA[n]||[]).push(t);
+      }
     });
   });
 
@@ -478,11 +486,14 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
     const bPts      = blockedPtsByA[findKey(blockedPtsByA)] || 0;
     const iPts      = inProgPtsByA[findKey(inProgPtsByA)]  || 0;
     const oPts      = otherPtsByA[findKey(otherPtsByA)]    || 0;
+    const bTasks    = blockedTasksByA[findKey(blockedTasksByA)] || [];
+    const iTasks    = inProgTasksByA[findKey(inProgTasksByA)]   || [];
+    const oTasks    = otherTasksByA[findKey(otherTasksByA)]     || [];
     const accounted = delivered + bPts + iPts + oPts;
     const delta     = delivered - planned;
     const displayName = nameKey.split(' ')[0].charAt(0).toUpperCase() + nameKey.split(' ')[0].slice(1);
     const color = memberColor(lk);
-    return { displayName, planned, delivered, bPts, iPts, oPts, accounted, delta, color };
+    return { displayName, planned, delivered, bPts, iPts, oPts, bTasks, iTasks, oTasks, accounted, delta, color };
   });
 
   el.innerHTML = `
@@ -520,7 +531,16 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
 
       <div class="card">
         <div class="card-title">📊 Commitment vs Delivery</div>
-        ${commitRows.map(({displayName, planned, delivered, bPts, iPts, oPts, accounted, delta, color}) => {
+        ${commitRows.map(({displayName, planned, delivered, bPts, iPts, oPts, bTasks, iTasks, oTasks, accounted, delta, color}) => {
+          const renderTaskList = (arr, bg, border, badge) => arr.map(t => {
+            const pts = getPoints(t);
+            return `<div style="display:flex;align-items:center;gap:6px;padding:4px 6px;background:${bg};border-left:2px solid ${border};border-radius:4px;margin-top:4px">
+              <a href="${t.url}" target="_blank" style="font-size:10px;font-weight:700;color:#64748b;white-space:nowrap;text-decoration:none">${t.custom_id}</a>
+              ${badge}
+              <span style="font-size:11px;flex:1;color:#374151">${t.name.length>55?t.name.slice(0,55)+'…':t.name}</span>
+              ${pts ? `<span style="font-size:11px;font-weight:700;color:#6d28d9;white-space:nowrap">${pts}pt</span>` : ''}
+            </div>`;
+          }).join('');
           const base      = Math.max(planned, accounted, 1);
           const dPct      = Math.min(Math.round(delivered/base*100), 100);
           const bPct      = Math.min(Math.round(bPts/base*100), 100 - dPct);
@@ -549,6 +569,9 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
               <div style="height:100%;width:${iPct}%;background:#3b82f6;transition:width .4s"></div>
             </div>
             <div style="font-size:10px;color:#64748b;margin-top:4px;display:flex;gap:10px;flex-wrap:wrap">${tags.join('')}</div>
+            ${renderTaskList(bTasks, '#fff7f7', '#ef4444', '<span style="font-size:9px;background:#fee2e2;color:#dc2626;padding:1px 5px;border-radius:3px;font-weight:700">BLOCKED</span>')}
+            ${renderTaskList(iTasks, '#eff6ff', '#3b82f6', '<span style="font-size:9px;background:#dbeafe;color:#2563eb;padding:1px 5px;border-radius:3px;font-weight:700">IN PROG</span>')}
+            ${renderTaskList(oTasks, '#fffbeb', '#f59e0b', '<span style="font-size:9px;background:#fef3c7;color:#d97706;padding:1px 5px;border-radius:3px;font-weight:700">PENDING</span>')}
           </div>`;
         }).join('')}
       </div>
