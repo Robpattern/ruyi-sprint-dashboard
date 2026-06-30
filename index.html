@@ -178,7 +178,7 @@ const FALLBACK_POINTS = {
   'ATECH-7418': 5, 'ATECH-7419': 3, 'ATECH-7420': 3, 'ATECH-7421': 2,
   'ATECH-7440': 3, 'ATECH-7439': 3, 'ATECH-7438': 2, 'ATECH-7441': 2,
   'ATECH-7517': 5, 'ATECH-7436': 8, 'ATECH-7339': 3, 'ATECH-7342': 3,
-  'ATECH-7345': 3, 'ATECH-7558': 5, 'ATECH-7305': 2, 'ATECH-7186': 2,
+  'ATECH-7345': 3, 'ATECH-7558': 5, 'ATECH-7305': 3, 'ATECH-7186': 2,
   'ATECH-7503': 2,
 };
 
@@ -574,6 +574,22 @@ function renderActive(panelId, s, tasks) {
             <div class="asgn-val">${cnt} tasks</div>
           </div>`).join('')}
       </div>
+
+      ${(()=>{
+        const blocked = tasks.filter(t=>getStatus(t)==='blocked');
+        if (!blocked.length) return '';
+        return `<div class="card full" style="border:1.5px solid #fca5a5">
+          <div class="card-title" style="color:#dc2626">🚫 Blocked Items (${blocked.length})</div>
+          ${blocked.map(t=>{
+            const pts=getPoints(t);
+            return `<div class="sprint-item" style="background:#fff7f7;border-left:3px solid #ef4444">
+              <div style="min-width:88px"><div class="tid"><a href="${t.url}" target="_blank">${t.custom_id}</a></div><span class="st-badge st-blocked">BLOCKED</span></div>
+              <div style="flex:1"><div class="tname">${t.name}</div><div class="ta">${(t.assignees||[]).map(a=>a.username.split(' ')[0]).join(', ')||'Unassigned'}</div></div>
+              <div style="font-size:14px;font-weight:800;color:#6d28d9">${pts>0?pts+'pt':''}</div>
+            </div>`;
+          }).join('')}
+        </div>`;
+      })()}
 
       <div class="card full">
         <div class="card-title">📌 All Tasks</div>
