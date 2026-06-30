@@ -179,8 +179,9 @@ const SPRINT_EXTRA_IDS = {
 const TEAM_ID = '2323726';
 
 // Team-confirmed planned commitments per sprint (overrides live sum for delta widget)
+// Ryan's 18 was double-counting ATECH-7440 parent (3pt) + its subtasks (3x1pt) — true scope is 15pt
 const SPRINT_PLANNED = {
-  '901713532382': { 'ryan ruan': 18, 'vincent qiao': 26 }, // Ryan & Vincent confirmed
+  '901713532382': { 'ryan ruan': 15, 'vincent qiao': 26 },
 };
 
 // Tasks added mid-sprint (date_created > sprint start) — detected via API
