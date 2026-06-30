@@ -172,6 +172,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 const RUYI_FOLDER_ID  = '90172589900';
 const BACKLOG_LIST_ID = '901705110942';
 
+// Extra task IDs to always fetch for specific sprint lists (multi-list tasks missing from view)
+const SPRINT_EXTRA_IDS = {
+  '901713532382': ['ATECH-7436', 'ATECH-7339', 'ATECH-7342', 'ATECH-7345', 'ATECH-7607'],
+};
+const TEAM_ID = '2323726';
+
 // Verified point fallbacks for older sprints (REST API may return null)
 const FALLBACK_POINTS = {
   'ATECH-7270': 3, 'ATECH-7315': 5, 'ATECH-7338': 5, 'ATECH-7348': 3,
@@ -293,8 +299,20 @@ async function getBoardViewId(listId) {
 
 async function fetchSprintTasks(listId) {
   const viewId = await getBoardViewId(listId);
-  if (viewId) return fetchViewTasks(viewId);
-  return fetchListTasks(listId);
+  const base = viewId ? await fetchViewTasks(viewId) : await fetchListTasks(listId);
+
+  // Supplement with any known extra tasks for this sprint (multi-list tasks missing from view)
+  const extraIds = SPRINT_EXTRA_IDS[listId] || [];
+  if (extraIds.length) {
+    const existing = new Set(base.map(t => t.custom_id));
+    const extras = await Promise.allSettled(
+      extraIds.filter(id => !existing.has(id)).map(id =>
+        api(`/v2/task/${id}`, { custom_task_ids: true, team_id: TEAM_ID })
+      )
+    );
+    extras.forEach(r => { if (r.status === 'fulfilled' && r.value?.id) base.push(r.value); });
+  }
+  return base;
 }
 
 /* ══════════════════════════════════════════
@@ -394,12 +412,14 @@ function updateHeader(idx) {
 /* ══════════════════════════════════════════
    RENDER — REVIEW (past sprint)
 ══════════════════════════════════════════ */
-function renderReview(panelId, s, tasks, showBackBtn = false) {
+function renderReview(panelId, s, tasks, showBackBtn = true) {
   tasks = tasks.filter(t => !isTest(t));
   const el = document.getElementById(panelId);
 
-  const closed  = tasks.filter(t => getStatus(t) === 'closed');
-  const inProg  = tasks.filter(t => getStatus(t) === 'in progress');
+  const closed    = tasks.filter(t => getStatus(t) === 'closed');
+  const blocked   = tasks.filter(t => getStatus(t) === 'blocked');
+  const inProg    = tasks.filter(t => getStatus(t) === 'in progress');
+  const unfinished = tasks.filter(t => getStatus(t) !== 'closed');
   const totalPts = tasks.reduce((sum,t) => sum+getPoints(t), 0);
   const closedPts = closed.reduce((sum,t) => sum+getPoints(t), 0);
 
@@ -425,7 +445,7 @@ function renderReview(panelId, s, tasks, showBackBtn = false) {
             <div class="chip c-purple"><div class="n">${totalPts}</div><div class="lbl">Sprint Points</div></div>
             <div class="chip c-yellow"><div class="n">${Math.round(closedPts/Math.max(totalPts,1)*100)}%</div><div class="lbl">% Done</div></div>
           </div>
-          ${showBackBtn ? `<button onclick="toggleViewMode('${panelId}', sprintSlots[${sprintSlots.findIndex(x=>x.id===s.id)}], cachedTasks['${panelId}'])" style="margin-left:14px;padding:6px 14px;border-radius:8px;border:1px solid #e2e8f0;background:white;font-size:12px;font-weight:600;cursor:pointer;color:#475569;white-space:nowrap">⚡ Active View</button>` : ''}
+          <button onclick="toggleViewMode('${panelId}', sprintSlots[${sprintSlots.findIndex(x=>x.id===s.id)}], cachedTasks['${panelId}'])" style="margin-left:14px;padding:6px 14px;border-radius:8px;border:1px solid #e2e8f0;background:white;font-size:12px;font-weight:600;cursor:pointer;color:#475569;white-space:nowrap">⚡ Active View</button>
         </div>
       </div>
 
@@ -455,6 +475,25 @@ function renderReview(panelId, s, tasks, showBackBtn = false) {
           return `<div class="task-row done-task"><div class="task-id"><a href="${t.url}" target="_blank">${t.custom_id||t.id}</a></div><div class="task-name">${t.name}</div>${pts?`<span class="task-pts">${pts}pt</span>`:''}<div class="task-who">${(t.assignees||[]).map(a=>a.username.split(' ')[0]).join(', ')||'—'}</div></div>`;
         }).join('')}
       </div>
+
+      ${unfinished.length===0 ? '' : `
+      <div class="card" style="border:1.5px solid #fca5a5">
+        <div class="card-title" style="color:#dc2626">⚠️ Unfinished (${unfinished.length})</div>
+        ${unfinished.map(t=>{
+          const pts=getPoints(t);
+          const sl=getStatus(t);
+          const badge = sl==='blocked'?'<span class="st-badge st-blocked">BLOCKED</span>'
+                      : sl==='in progress'?'<span class="st-badge st-inprogress">IN PROGRESS</span>'
+                      : `<span class="st-badge" style="background:#fef3c7;color:#d97706">${sl.toUpperCase()}</span>`;
+          const bg = sl==='blocked'?'#fff7f7':sl==='in progress'?'#eff6ff':'#fffbeb';
+          const bl = sl==='blocked'?'#ef4444':sl==='in progress'?'#3b82f6':'#f59e0b';
+          return `<div class="sprint-item" style="background:${bg};border-left:3px solid ${bl}">
+            <div style="min-width:88px"><div class="tid"><a href="${t.url}" target="_blank" style="color:#3b82f6">${t.custom_id||t.id}</a></div>${badge}</div>
+            <div style="flex:1"><div class="tname"><a href="${t.url}" target="_blank" style="color:inherit;text-decoration:none">${t.name}</a></div><div class="ta">${(t.assignees||[]).map(a=>a.username.split(' ')[0]).join(', ')||'Unassigned'}</div></div>
+            <div style="font-size:14px;font-weight:800;color:#6d28d9">${pts>0?pts+'pt':''}</div>
+          </div>`;
+        }).join('')}
+      </div>`}
     </div>`;
 
   // Burndown chart
