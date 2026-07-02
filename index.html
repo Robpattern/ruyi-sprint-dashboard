@@ -791,19 +791,26 @@ function renderActive(panelId, s, tasks) {
   tasks = tasks.filter(t => !isTest(t));
   const el = document.getElementById(panelId);
 
-  const ptsByA = {}, tasksByA = {};
+  const ptsByA = {}, tasksByA = {}, taskListByA = {};
   tasks.forEach(t => {
-    const pts = getPoints(t);
-    (t.assignees||[]).forEach(a => {
+    const {pts} = getPointsDisplay(t);
+    const assignees = t.assignees||[];
+    // Split points evenly across assignees so shared tasks aren't double-counted
+    const share = assignees.length > 1 ? Math.round((pts / assignees.length) * 10) / 10 : pts;
+    assignees.forEach(a => {
       const n = a.username||'?';
-      ptsByA[n]   = (ptsByA[n]  ||0) + pts;
-      tasksByA[n] = (tasksByA[n]||0) + 1;
+      ptsByA[n]      = (ptsByA[n]     ||0) + share;
+      tasksByA[n]    = (tasksByA[n]   ||0) + 1;
+      taskListByA[n] = (taskListByA[n]||[]);
+      taskListByA[n].push({ id: t.custom_id, name: t.name, pts: share, full: pts, shared: assignees.length > 1, url: t.url, status: getStatus(t) });
     });
   });
+  // Round to avoid floating point display
+  Object.keys(ptsByA).forEach(k => { ptsByA[k] = Math.round(ptsByA[k] * 10) / 10; });
 
   const totalPts  = Object.values(ptsByA).reduce((s,v)=>s+v,0);
   const closed    = tasks.filter(t=>getStatus(t)==='closed');
-  const closedPts = closed.reduce((s,t)=>s+getPoints(t),0);
+  const closedPts = closed.reduce((s,t)=>s+getPointsDisplay(t).pts,0);
   const pctDone   = Math.round(closedPts/Math.max(totalPts,1)*100);
 
   const ptsEntries = Object.entries(ptsByA).sort((a,b)=>b[1]-a[1]);
@@ -830,14 +837,36 @@ function renderActive(panelId, s, tasks) {
       </div>
 
       <div class="card">
-        <div class="card-title">🎯 Points by Assignee</div>
-        ${ptsEntries.map(([name,pts])=>`
-          <div class="asgn-row">
-            <div class="av" style="background:${memberColor(name)}">${memberInitials(name)}</div>
-            <div class="asgn-name">${name.split(' ')[0]}</div>
-            <div class="asgn-bar-track"><div class="asgn-bar-fill" style="width:${Math.round(pts/maxPts*100)}%;background:${memberColor(name)}"></div></div>
-            <div class="asgn-val">${pts} pts</div>
-          </div>`).join('')}
+        <div class="card-title">🎯 Points by Assignee <span style="font-size:10px;font-weight:400;color:#94a3b8">(click to expand)</span></div>
+        ${ptsEntries.map(([name,pts])=>{
+          const color = memberColor(name);
+          const tid = 'breakdown-' + name.replace(/\s+/g,'_');
+          const tl = (taskListByA[name]||[]).sort((a,b)=>b.pts-a.pts);
+          const breakdownRows = tl.map(tk=>{
+            const done = tk.status==='closed'||tk.status==='done';
+            const statusDot = tk.status==='blocked'?'🚫':tk.status==='in progress'?'🔵':done?'✅':'⬜';
+            return `<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-top:1px solid #f1f5f9">
+              <span style="font-size:10px;width:16px;text-align:center">${statusDot}</span>
+              <a href="${tk.url}" target="_blank" style="font-size:10px;font-weight:600;color:#94a3b8;text-decoration:none;white-space:nowrap">${tk.id}</a>
+              <span style="font-size:11px;flex:1;color:${done?'#94a3b8':'#374151'};${done?'text-decoration:line-through':''};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${tk.name}</span>
+              <span style="font-size:11px;font-weight:700;color:${color};white-space:nowrap">${tk.pts}pt${tk.shared?` <span style="font-size:9px;color:#94a3b8">(÷${Math.round(tk.full/tk.pts)})</span>`:''}</span>
+            </div>`;
+          }).join('');
+          return `<div style="margin-bottom:4px">
+            <div class="asgn-row" onclick="document.getElementById('${tid}').style.display=document.getElementById('${tid}').style.display==='none'?'block':'none'" style="cursor:pointer">
+              <div class="av" style="background:${color}">${memberInitials(name)}</div>
+              <div class="asgn-name">${name.split(' ')[0]}</div>
+              <div class="asgn-bar-track"><div class="asgn-bar-fill" style="width:${Math.round(pts/maxPts*100)}%;background:${color}"></div></div>
+              <div class="asgn-val">${pts} pts</div>
+            </div>
+            <div id="${tid}" style="display:none;padding:4px 8px 4px 36px;background:#f8fafc;border-radius:6px;margin-top:2px;font-size:11px">
+              ${breakdownRows}
+              <div style="padding-top:4px;font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;margin-top:4px">
+                ${tl.length} tasks · ${pts}pt total${tl.some(t=>t.shared)?' · shared tasks split evenly':''}
+              </div>
+            </div>
+          </div>`;
+        }).join('')}
       </div>
 
       <div class="card">
