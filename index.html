@@ -326,7 +326,11 @@ async function fetchSprintTasks(listId) {
     );
     extras.forEach(r => { if (r.status === 'fulfilled' && r.value?.id) base.push(r.value); });
   }
-  return base;
+
+  // Remove parent "container" tasks whose children are also in the result
+  // (board views sometimes include the parent when a subtask is in the sprint)
+  const childParentIds = new Set(base.filter(t => t.parent).map(t => t.parent));
+  return base.filter(t => !childParentIds.has(t.id));
 }
 
 /* ══════════════════════════════════════════
