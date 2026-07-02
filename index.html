@@ -877,10 +877,25 @@ function renderPlanning(panelId, s, tasks, prevTasks, blTasks) {
           : tasks.map(t=>{
               const pts=getPoints(t);
               const unestBadge=!pts?'<span class="st-badge st-notest">NOT EST</span>':'';
-              return `<div class="sprint-item" style="background:#eff6ff;border-left:3px solid #3b82f6">
-                <div style="min-width:88px"><div class="tid"><a href="${t.url}" target="_blank">${t.custom_id}</a></div>${unestBadge}</div>
-                <div style="flex:1"><div class="tname">${t.name}</div><div class="ta">${(t.assignees||[]).map(a=>a.username.split(' ')[0]).join(', ')||'Unassigned'}</div></div>
-                <div style="font-size:14px;font-weight:800;color:#6d28d9">${pts>0?pts+'pt':''}</div>
+              const subs = (pts > 8 && t.subtasks?.length) ? t.subtasks.map(sub => {
+                const sp = Number(sub.points) || 0;
+                const ss = (sub.status||'').toLowerCase();
+                const sDone = ss==='closed'||ss==='done';
+                return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0 3px 12px;border-top:1px solid rgba(0,0,0,.05)">
+                  <span style="font-size:9px;color:#94a3b8">↳</span>
+                  <a href="${sub.url}" target="_blank" style="font-size:10px;font-weight:600;color:#94a3b8;text-decoration:none;white-space:nowrap">${sub.custom_id||''}</a>
+                  <span style="font-size:11px;flex:1;color:${sDone?'#94a3b8':'#374151'};${sDone?'text-decoration:line-through':''}">${(sub.name||'').length>50?(sub.name||'').slice(0,50)+'…':(sub.name||'')}</span>
+                  ${sp?`<span style="font-size:10px;font-weight:700;color:#6d28d9">${sp}pt</span>`:''}
+                  ${sDone?'<span style="font-size:9px;color:#059669">✓</span>':''}
+                </div>`;
+              }).join('') : '';
+              return `<div class="sprint-item" style="background:#eff6ff;border-left:3px solid #3b82f6;flex-direction:column;align-items:stretch;padding:0">
+                <div style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px">
+                  <div style="min-width:88px"><div class="tid"><a href="${t.url}" target="_blank">${t.custom_id}</a></div>${unestBadge}</div>
+                  <div style="flex:1"><div class="tname">${t.name}</div><div class="ta">${(t.assignees||[]).map(a=>a.username.split(' ')[0]).join(', ')||'Unassigned'}</div></div>
+                  <div style="font-size:14px;font-weight:800;color:#6d28d9">${pts>0?pts+'pt':''}</div>
+                </div>
+                ${subs}
               </div>`;
             }).join('')}
       </div>
