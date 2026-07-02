@@ -175,6 +175,7 @@ const BACKLOG_LIST_ID = '901705110942';
 // Extra task IDs to always fetch for specific sprint lists (multi-list tasks missing from view)
 const SPRINT_EXTRA_IDS = {
   '901713532382': ['ATECH-7436', 'ATECH-7339', 'ATECH-7342', 'ATECH-7345', 'ATECH-7607'],
+  '901713532383': ['ATECH-7436', 'ATECH-7607'], // Sprint 11: carry-overs from S10
 };
 const TEAM_ID = '2323726';
 
@@ -199,7 +200,7 @@ const FALLBACK_POINTS = {
   'ATECH-7440': 3, 'ATECH-7439': 3, 'ATECH-7438': 2, 'ATECH-7441': 2,
   'ATECH-7517': 5, 'ATECH-7436': 8, 'ATECH-7339': 3, 'ATECH-7342': 3,
   'ATECH-7345': 3, 'ATECH-7558': 5, 'ATECH-7305': 3, 'ATECH-7186': 2,
-  'ATECH-7503': 2,
+  'ATECH-7503': 2, 'ATECH-7607': 18,
 };
 
 const MEMBER_COLORS = {
@@ -277,9 +278,17 @@ async function fetchViewTasks(viewId) {
   while (last === 100 && page < 10) {
     const d = await api(`/v2/view/${viewId}/task`, { page });
     const batch = d.tasks || [];
-    // Fetch detailed version to get points
-    const detailed = await Promise.allSettled(batch.map(t => api(`/v2/task/${t.id}`)));
-    const good = detailed.filter(r=>r.status==='fulfilled'&&r.value?.id).map(r=>r.value);
+    // Fetch detailed version (with subtasks) to get points
+    const detailed = await Promise.allSettled(batch.map(t => api(`/v2/task/${t.id}`, { include_subtasks: true })));
+    const good = detailed.filter(r=>r.status==='fulfilled'&&r.value?.id).map(r => {
+      const task = r.value;
+      // Roll up subtask points when parent has no points set (ClickUp UI shows rollup)
+      if ((task.points == null) && task.subtasks?.length) {
+        const rollup = task.subtasks.reduce((s, sub) => s + (Number(sub.points) || 0), 0);
+        if (rollup > 0) task.points = rollup;
+      }
+      return task;
+    });
     all = all.concat(good);
     last = batch.length;
     page++;
