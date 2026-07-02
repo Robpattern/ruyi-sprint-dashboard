@@ -781,7 +781,7 @@ function renderActive(panelId, s, tasks) {
           const bl = sl==='blocked'?'#f97316':sl==='closed'?'#10b981':sl==='in progress'?'#3b82f6':'#e2e8f0';
           const subs = (pts > 8 && t.subtasks?.length) ? t.subtasks.map(sub => {
             const sp = Number(sub.points) || 0;
-            const ss = (sub.status||'').toLowerCase();
+            const ss = (sub.status?.status||sub.status||'').toLowerCase();
             const sDone = ss==='closed'||ss==='done';
             return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0 3px 12px;border-top:1px solid rgba(0,0,0,.05)">
               <span style="font-size:9px;color:#94a3b8">↳</span>
@@ -879,7 +879,7 @@ function renderPlanning(panelId, s, tasks, prevTasks, blTasks) {
               const unestBadge=!pts?'<span class="st-badge st-notest">NOT EST</span>':'';
               const subs = (pts > 8 && t.subtasks?.length) ? t.subtasks.map(sub => {
                 const sp = Number(sub.points) || 0;
-                const ss = (sub.status||'').toLowerCase();
+                const ss = (sub.status?.status||sub.status||'').toLowerCase();
                 const sDone = ss==='closed'||ss==='done';
                 return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0 3px 12px;border-top:1px solid rgba(0,0,0,.05)">
                   <span style="font-size:9px;color:#94a3b8">↳</span>
