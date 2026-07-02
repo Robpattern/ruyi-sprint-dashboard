@@ -240,6 +240,13 @@ let cachedTasks = {}; // panelId -> tasks array
 let cachedBlTasks = [];
 let syncedAt = null;
 
+// Per-assignee point splits for tasks where ClickUp has uneven breakdowns.
+// Keys are task custom IDs; values map assignee username → their points.
+// Add a row here whenever a shared task has a non-equal split in ClickUp.
+const TASK_ASSIGNEE_POINTS = {
+  'ATECH-7237': { 'Vincent Qiao': 3, 'leo.yang': 8 },
+};
+
 // Points remaining overrides — persisted to localStorage
 let pointsOverrides = JSON.parse(localStorage.getItem('ruyi_pts_override') || '{}');
 
@@ -796,12 +803,15 @@ function renderActive(panelId, s, tasks) {
     const {pts} = getPointsDisplay(t);
     const assignees = t.assignees||[];
     const hasPerAssigneePoints = assignees.some(a => a.points != null);
+    const manualSplit = TASK_ASSIGNEE_POINTS[t.custom_id];
     assignees.forEach(a => {
       const n = a.username||'?';
-      // Use ClickUp's per-assignee breakdown if available, else split evenly
-      const share = hasPerAssigneePoints
-        ? (Number(a.points) || 0)
-        : (assignees.length > 1 ? Math.round((pts / assignees.length) * 10) / 10 : pts);
+      // Priority: manual TASK_ASSIGNEE_POINTS map → ClickUp API per-assignee → even split
+      const share = manualSplit
+        ? (manualSplit[a.username] ?? Math.round((pts / assignees.length) * 10) / 10)
+        : hasPerAssigneePoints
+          ? (Number(a.points) || 0)
+          : (assignees.length > 1 ? Math.round((pts / assignees.length) * 10) / 10 : pts);
       ptsByA[n]      = (ptsByA[n]     ||0) + share;
       tasksByA[n]    = (tasksByA[n]   ||0) + 1;
       taskListByA[n] = (taskListByA[n]||[]);
