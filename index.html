@@ -330,7 +330,7 @@ async function fetchSprintTasks(listId) {
     const existing = new Set(base.map(t => t.custom_id));
     const extras = await Promise.allSettled(
       extraIds.filter(id => !existing.has(id)).map(id =>
-        api(`/v2/task/${id}`, { custom_task_ids: true, team_id: TEAM_ID })
+        api(`/v2/task/${id}`, { custom_task_ids: true, team_id: TEAM_ID, include_subtasks: true })
       )
     );
     extras.forEach(r => { if (r.status === 'fulfilled' && r.value?.id) base.push(r.value); });
