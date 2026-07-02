@@ -795,10 +795,13 @@ function renderActive(panelId, s, tasks) {
   tasks.forEach(t => {
     const {pts} = getPointsDisplay(t);
     const assignees = t.assignees||[];
-    // Split points evenly across assignees so shared tasks aren't double-counted
-    const share = assignees.length > 1 ? Math.round((pts / assignees.length) * 10) / 10 : pts;
+    const hasPerAssigneePoints = assignees.some(a => a.points != null);
     assignees.forEach(a => {
       const n = a.username||'?';
+      // Use ClickUp's per-assignee breakdown if available, else split evenly
+      const share = hasPerAssigneePoints
+        ? (Number(a.points) || 0)
+        : (assignees.length > 1 ? Math.round((pts / assignees.length) * 10) / 10 : pts);
       ptsByA[n]      = (ptsByA[n]     ||0) + share;
       tasksByA[n]    = (tasksByA[n]   ||0) + 1;
       taskListByA[n] = (taskListByA[n]||[]);
@@ -849,7 +852,7 @@ function renderActive(panelId, s, tasks) {
               <span style="font-size:10px;width:16px;text-align:center">${statusDot}</span>
               <a href="${tk.url}" target="_blank" style="font-size:10px;font-weight:600;color:#94a3b8;text-decoration:none;white-space:nowrap">${tk.id}</a>
               <span style="font-size:11px;flex:1;color:${done?'#94a3b8':'#374151'};${done?'text-decoration:line-through':''};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${tk.name}</span>
-              <span style="font-size:11px;font-weight:700;color:${color};white-space:nowrap">${tk.pts}pt${tk.shared?` <span style="font-size:9px;color:#94a3b8">(÷${Math.round(tk.full/tk.pts)})</span>`:''}</span>
+              <span style="font-size:11px;font-weight:700;color:${color};white-space:nowrap">${tk.pts}pt${tk.shared?` <span style="font-size:9px;color:#94a3b8">(of ${tk.full})</span>`:''}</span>
             </div>`;
           }).join('');
           return `<div style="margin-bottom:4px">
