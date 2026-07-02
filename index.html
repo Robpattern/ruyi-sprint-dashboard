@@ -203,6 +203,13 @@ const FALLBACK_POINTS = {
   'ATECH-7503': 2, 'ATECH-7607': 18,
 };
 
+// Points remaining override — use when sprint planning revises the remaining scope
+// downward from what ClickUp shows. Edit the number here; dashboard shows it with a "rem" badge.
+// Format: 'TASK-ID': remaining_points
+const POINTS_REMAINING = {
+  'ATECH-7607': 10,  // 18pt total; ~10pt remaining per Sprint 11 planning
+};
+
 const MEMBER_COLORS = {
   'vincent qiao': '#6366f1', 'ryan ruan': '#3b82f6', 'james tan': '#f59e0b',
   'mio jia': '#ec4899',     'robert wang': '#10b981', 'zowie meng': '#14b8a6',
@@ -233,6 +240,19 @@ const memberInitials = name =>
 function getPoints(t) {
   return FALLBACK_POINTS[t.custom_id]
     ?? (t.points != null ? Number(t.points) || 0 : 0);
+}
+
+// Returns { pts, html } — pts is what to use for math, html is the points badge for rendering.
+// If POINTS_REMAINING has an override, shows "Xpt rem" with the full total struck out.
+function getPointsDisplay(t) {
+  const full = getPoints(t);
+  const rem = POINTS_REMAINING[t.custom_id];
+  if (rem != null && rem !== full) {
+    const html = `<span style="font-size:14px;font-weight:800;color:#6d28d9">${rem}pt <span style="font-size:10px;font-weight:500;color:#94a3b8;text-decoration:line-through">${full}</span> <span style="font-size:9px;font-weight:600;color:#f59e0b;background:#fef3c7;padding:1px 4px;border-radius:3px">rem</span></span>`;
+    return { pts: rem, html };
+  }
+  const html = full > 0 ? `<span style="font-size:14px;font-weight:800;color:#6d28d9">${full}pt</span>` : '';
+  return { pts: full, html };
 }
 
 function fmtTime(d) {
@@ -619,7 +639,7 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
       <div class="card" style="border:1.5px solid #fca5a5">
         <div class="card-title" style="color:#dc2626">⚠️ Unfinished (${unfinished.length})</div>
         ${unfinished.map(t=>{
-          const pts=getPoints(t);
+          const {pts,html:ptsHtml}=getPointsDisplay(t);
           const sl=getStatus(t);
           const badge = sl==='blocked'?'<span class="st-badge st-blocked">BLOCKED</span>'
                       : sl==='in progress'?'<span class="st-badge st-inprogress">IN PROGRESS</span>'
@@ -629,7 +649,7 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
           return `<div class="sprint-item" style="background:${bg};border-left:3px solid ${bl}">
             <div style="min-width:88px"><div class="tid"><a href="${t.url}" target="_blank" style="color:#3b82f6">${t.custom_id||t.id}</a></div>${badge}</div>
             <div style="flex:1"><div class="tname"><a href="${t.url}" target="_blank" style="color:inherit;text-decoration:none">${t.name}</a></div><div class="ta">${(t.assignees||[]).map(a=>a.username.split(' ')[0]).join(', ')||'Unassigned'}</div></div>
-            <div style="font-size:14px;font-weight:800;color:#6d28d9">${pts>0?pts+'pt':''}</div>
+            ${ptsHtml}
           </div>`;
         }).join('')}
       </div>`}
@@ -759,11 +779,11 @@ function renderActive(panelId, s, tasks) {
         return `<div class="card full" style="border:1.5px solid #fca5a5">
           <div class="card-title" style="color:#dc2626">🚫 Blocked Items (${blocked.length})</div>
           ${blocked.map(t=>{
-            const pts=getPoints(t);
+            const {html:ptsHtml}=getPointsDisplay(t);
             return `<div class="sprint-item" style="background:#fff7f7;border-left:3px solid #ef4444">
               <div style="min-width:88px"><div class="tid"><a href="${t.url}" target="_blank">${t.custom_id}</a></div><span class="st-badge st-blocked">BLOCKED</span></div>
               <div style="flex:1"><div class="tname">${t.name}</div><div class="ta">${(t.assignees||[]).map(a=>a.username.split(' ')[0]).join(', ')||'Unassigned'}</div></div>
-              <div style="font-size:14px;font-weight:800;color:#6d28d9">${pts>0?pts+'pt':''}</div>
+              ${ptsHtml}
             </div>`;
           }).join('')}
         </div>`;
@@ -772,7 +792,7 @@ function renderActive(panelId, s, tasks) {
       <div class="card full">
         <div class="card-title">📌 All Tasks</div>
         ${sorted.map(t=>{
-          const pts = getPoints(t);
+          const {pts, html: ptsHtml} = getPointsDisplay(t);
           const sl  = getStatus(t);
           const badge = sl==='blocked'?'<span class="st-badge st-blocked">BLOCKED</span>'
                       : sl==='in progress'?'<span class="st-badge st-inprogress">IN PROGRESS</span>'
@@ -795,7 +815,7 @@ function renderActive(panelId, s, tasks) {
             <div style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px">
               <div style="min-width:88px"><div class="tid"><a href="${t.url}" target="_blank">${t.custom_id}</a></div>${badge}</div>
               <div style="flex:1"><div class="tname">${t.name}</div><div class="ta">${(t.assignees||[]).map(a=>a.username.split(' ')[0]).join(', ')||'Unassigned'}</div></div>
-              <div style="font-size:14px;font-weight:800;color:#6d28d9">${pts>0?pts+'pt':''}</div>
+              ${ptsHtml}
             </div>
             ${subs}
           </div>`;
@@ -875,7 +895,7 @@ function renderPlanning(panelId, s, tasks, prevTasks, blTasks) {
         ${tasks.length===0
           ? '<div class="loading">No tasks committed yet.</div>'
           : tasks.map(t=>{
-              const pts=getPoints(t);
+              const {pts,html:ptsHtml}=getPointsDisplay(t);
               const unestBadge=!pts?'<span class="st-badge st-notest">NOT EST</span>':'';
               const subs = (pts > 8 && t.subtasks?.length) ? t.subtasks.map(sub => {
                 const sp = Number(sub.points) || 0;
@@ -893,7 +913,7 @@ function renderPlanning(panelId, s, tasks, prevTasks, blTasks) {
                 <div style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px">
                   <div style="min-width:88px"><div class="tid"><a href="${t.url}" target="_blank">${t.custom_id}</a></div>${unestBadge}</div>
                   <div style="flex:1"><div class="tname">${t.name}</div><div class="ta">${(t.assignees||[]).map(a=>a.username.split(' ')[0]).join(', ')||'Unassigned'}</div></div>
-                  <div style="font-size:14px;font-weight:800;color:#6d28d9">${pts>0?pts+'pt':''}</div>
+                  ${ptsHtml}
                 </div>
                 ${subs}
               </div>`;
