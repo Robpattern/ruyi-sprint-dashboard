@@ -84,6 +84,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 
 /* Sprint items */
 .sprint-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 8px; margin-bottom: 8px; }
+.sprint-item:hover .pts-edit-hint { opacity: 1 !important; }
 .sprint-item:last-child { margin-bottom: 0; }
 .tid { font-size: 10px; font-weight: 700; color: #94a3b8; }
 .tid a { color: inherit; text-decoration: none; }
@@ -137,6 +138,19 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 </style>
 </head>
 <body>
+<!-- Points override popover -->
+<div id="pts-popover" style="display:none;position:absolute;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;box-shadow:0 8px 30px rgba(0,0,0,.15);z-index:9999;min-width:220px">
+  <div style="font-size:12px;font-weight:700;color:#374151;margin-bottom:4px">Override remaining points</div>
+  <div style="font-size:11px;color:#94a3b8;margin-bottom:10px">Full scope: <strong id="pts-full" style="color:#6d28d9"></strong>pt</div>
+  <input id="pts-input" type="number" min="0" placeholder="Remaining pts…"
+    style="width:100%;box-sizing:border-box;border:1.5px solid #d1d5db;border-radius:6px;padding:7px 10px;font-size:14px;font-weight:600;color:#1e293b;margin-bottom:10px;outline:none"
+    onkeydown="if(event.key==='Enter')applyPtsOverride()">
+  <div style="display:flex;gap:6px">
+    <button onclick="applyPtsOverride()" style="flex:1;background:#6d28d9;color:#fff;border:none;border-radius:6px;padding:7px;cursor:pointer;font-size:12px;font-weight:700">Save</button>
+    <button onclick="clearPtsOverride()" style="flex:1;background:#f1f5f9;color:#64748b;border:none;border-radius:6px;padding:7px;cursor:pointer;font-size:12px">Clear</button>
+    <button onclick="closePtsPopover()" style="background:#f1f5f9;color:#94a3b8;border:none;border-radius:6px;padding:7px 10px;cursor:pointer;font-size:13px">✕</button>
+  </div>
+</div>
 
 <div class="header">
   <div class="header-top">
@@ -223,7 +237,62 @@ let currentTab = 0;
 let sprintSlots = [];   // [{list, role:'review'|'active'|'planning'}]
 let charts = {};
 let cachedTasks = {}; // panelId -> tasks array
+let cachedBlTasks = [];
 let syncedAt = null;
+
+// Points remaining overrides — persisted to localStorage
+let pointsOverrides = JSON.parse(localStorage.getItem('ruyi_pts_override') || '{}');
+
+function savePointsOverride(customId, pts) {
+  if (pts === null) { delete pointsOverrides[customId]; }
+  else { pointsOverrides[customId] = pts; }
+  localStorage.setItem('ruyi_pts_override', JSON.stringify(pointsOverrides));
+  rerenderAll();
+}
+
+function rerenderAll() {
+  sprintSlots.forEach((s, i) => {
+    const panelId = `panel-${i}`;
+    const tasks = cachedTasks[panelId] || [];
+    const prevTasks = i > 0 ? (cachedTasks[`panel-${i-1}`] || []) : [];
+    if (s.role === 'review')   renderReview(panelId, s, tasks);
+    if (s.role === 'active')   renderActive(panelId, s, tasks);
+    if (s.role === 'planning') renderPlanning(panelId, s, tasks, prevTasks, cachedBlTasks);
+  });
+}
+
+// Points override popover state
+let _popoverTaskId = null;
+let _popoverFull   = 0;
+
+function openPtsPopover(el, customId, full) {
+  _popoverTaskId = customId;
+  _popoverFull   = full;
+  const pop = document.getElementById('pts-popover');
+  const cur = pointsOverrides[customId] ?? POINTS_REMAINING[customId];
+  document.getElementById('pts-full').textContent = full;
+  document.getElementById('pts-input').value = cur != null ? cur : full;
+  // Position near clicked element
+  const rect = el.getBoundingClientRect();
+  pop.style.top  = (rect.bottom + 8 + window.scrollY) + 'px';
+  pop.style.left = Math.min(rect.left, window.innerWidth - 230) + 'px';
+  pop.style.display = 'block';
+  setTimeout(() => document.getElementById('pts-input').focus(), 50);
+}
+function closePtsPopover() {
+  document.getElementById('pts-popover').style.display = 'none';
+  _popoverTaskId = null;
+}
+function applyPtsOverride() {
+  const v = parseInt(document.getElementById('pts-input').value, 10);
+  if (!isNaN(v) && _popoverTaskId) savePointsOverride(_popoverTaskId, v === _popoverFull ? null : v);
+  closePtsPopover();
+}
+function clearPtsOverride() {
+  if (_popoverTaskId) savePointsOverride(_popoverTaskId, null);
+  closePtsPopover();
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closePtsPopover(); });
 
 /* ══════════════════════════════════════════
    HELPERS
@@ -242,16 +311,25 @@ function getPoints(t) {
     ?? (t.points != null ? Number(t.points) || 0 : 0);
 }
 
-// Returns { pts, html } — pts is what to use for math, html is the points badge for rendering.
-// If POINTS_REMAINING has an override, shows "Xpt rem" with the full total struck out.
+// Returns { pts, html } — pts is what to use for math, html is the clickable points badge.
+// Checks pointsOverrides (localStorage) first, then POINTS_REMAINING (hardcoded seeds).
 function getPointsDisplay(t) {
   const full = getPoints(t);
-  const rem = POINTS_REMAINING[t.custom_id];
+  const cid  = t.custom_id || '';
+  const rem  = pointsOverrides[cid] ?? POINTS_REMAINING[cid];
+  const click = `onclick="openPtsPopover(this,'${cid}',${full})" title="Click to override remaining points" style="cursor:pointer"`;
   if (rem != null && rem !== full) {
-    const html = `<span style="font-size:14px;font-weight:800;color:#6d28d9">${rem}pt <span style="font-size:10px;font-weight:500;color:#94a3b8;text-decoration:line-through">${full}</span> <span style="font-size:9px;font-weight:600;color:#f59e0b;background:#fef3c7;padding:1px 4px;border-radius:3px">rem</span></span>`;
+    const html = `<span ${click} style="display:inline-flex;align-items:center;gap:4px;font-size:14px;font-weight:800;color:#6d28d9">
+      ${rem}pt
+      <span style="font-size:10px;font-weight:400;color:#94a3b8;text-decoration:line-through">${full}</span>
+      <span style="font-size:9px;font-weight:700;color:#d97706;background:#fef3c7;padding:1px 5px;border-radius:3px;line-height:1.4">rem</span>
+    </span>`;
     return { pts: rem, html };
   }
-  const html = full > 0 ? `<span style="font-size:14px;font-weight:800;color:#6d28d9">${full}pt</span>` : '';
+  const html = `<span ${click} style="display:inline-flex;align-items:center;gap:3px;font-size:14px;font-weight:800;color:#6d28d9">
+    ${full > 0 ? full + 'pt' : '<span style="font-size:11px;color:#cbd5e1">— pt</span>'}
+    <span style="font-size:9px;opacity:0;transition:opacity .15s" class="pts-edit-hint">✏️</span>
+  </span>`;
   return { pts: full, html };
 }
 
@@ -955,6 +1033,7 @@ async function syncNow() {
     const taskPromises = sprintSlots.map(s => fetchSprintTasks(s.id));
     const blPromise = fetchListTasks(BACKLOG_LIST_ID);
     const [blTasks, ...taskArrays] = await Promise.all([blPromise, ...taskPromises]);
+    cachedBlTasks = blTasks;
 
     // 4. Render each panel
     sprintSlots.forEach((s, i) => {
