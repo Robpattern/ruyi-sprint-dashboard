@@ -313,6 +313,21 @@ const memberColor = name => {
 const memberInitials = name =>
   (name||'?').split(' ').map(p=>p[0]).join('').slice(0,2).toUpperCase();
 
+// Renders assignee line — shows per-person split when task is in TASK_ASSIGNEE_POINTS
+function renderAssignees(t) {
+  const assignees = t.assignees||[];
+  if (!assignees.length) return 'Unassigned';
+  const split = TASK_ASSIGNEE_POINTS[t.custom_id];
+  if (split && assignees.length > 1) {
+    return assignees.map(a => {
+      const first = a.username.split(' ')[0];
+      const pts = split[a.username];
+      return pts != null ? `${first} <span style="font-size:10px;font-weight:700;color:#6d28d9">${pts}pt</span>` : first;
+    }).join(' · ');
+  }
+  return assignees.map(a => a.username.split(' ')[0]).join(', ');
+}
+
 function getPoints(t) {
   return FALLBACK_POINTS[t.custom_id]
     ?? (t.points != null ? Number(t.points) || 0 : 0);
@@ -733,7 +748,7 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
           const bl = sl==='blocked'?'#ef4444':sl==='in progress'?'#3b82f6':'#f59e0b';
           return `<div class="sprint-item" style="background:${bg};border-left:3px solid ${bl}">
             <div style="min-width:88px"><div class="tid"><a href="${t.url}" target="_blank" style="color:#3b82f6">${t.custom_id||t.id}</a></div>${badge}</div>
-            <div style="flex:1"><div class="tname"><a href="${t.url}" target="_blank" style="color:inherit;text-decoration:none">${t.name}</a></div><div class="ta">${(t.assignees||[]).map(a=>a.username.split(' ')[0]).join(', ')||'Unassigned'}</div></div>
+            <div style="flex:1"><div class="tname"><a href="${t.url}" target="_blank" style="color:inherit;text-decoration:none">${t.name}</a></div><div class="ta">${renderAssignees(t)}</div></div>
             ${ptsHtml}
           </div>`;
         }).join('')}
@@ -902,7 +917,7 @@ function renderActive(panelId, s, tasks) {
             const {html:ptsHtml}=getPointsDisplay(t);
             return `<div class="sprint-item" style="background:#fff7f7;border-left:3px solid #ef4444">
               <div style="min-width:88px"><div class="tid"><a href="${t.url}" target="_blank">${t.custom_id}</a></div><span class="st-badge st-blocked">BLOCKED</span></div>
-              <div style="flex:1"><div class="tname">${t.name}</div><div class="ta">${(t.assignees||[]).map(a=>a.username.split(' ')[0]).join(', ')||'Unassigned'}</div></div>
+              <div style="flex:1"><div class="tname">${t.name}</div><div class="ta">${renderAssignees(t)}</div></div>
               ${ptsHtml}
             </div>`;
           }).join('')}
@@ -934,7 +949,7 @@ function renderActive(panelId, s, tasks) {
           return `<div class="sprint-item" style="background:${bg};border-left:3px solid ${bl};flex-direction:column;align-items:stretch;padding:0">
             <div style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px">
               <div style="min-width:88px"><div class="tid"><a href="${t.url}" target="_blank">${t.custom_id}</a></div>${badge}</div>
-              <div style="flex:1"><div class="tname">${t.name}</div><div class="ta">${(t.assignees||[]).map(a=>a.username.split(' ')[0]).join(', ')||'Unassigned'}</div></div>
+              <div style="flex:1"><div class="tname">${t.name}</div><div class="ta">${renderAssignees(t)}</div></div>
               ${ptsHtml}
             </div>
             ${subs}
@@ -1032,7 +1047,7 @@ function renderPlanning(panelId, s, tasks, prevTasks, blTasks) {
               return `<div class="sprint-item" style="background:#eff6ff;border-left:3px solid #3b82f6;flex-direction:column;align-items:stretch;padding:0">
                 <div style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px">
                   <div style="min-width:88px"><div class="tid"><a href="${t.url}" target="_blank">${t.custom_id}</a></div>${unestBadge}</div>
-                  <div style="flex:1"><div class="tname">${t.name}</div><div class="ta">${(t.assignees||[]).map(a=>a.username.split(' ')[0]).join(', ')||'Unassigned'}</div></div>
+                  <div style="flex:1"><div class="tname">${t.name}</div><div class="ta">${renderAssignees(t)}</div></div>
                   ${ptsHtml}
                 </div>
                 ${subs}
