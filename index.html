@@ -186,6 +186,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 const RUYI_FOLDER_ID  = '90172589900';
 const BACKLOG_LIST_ID = '901705110942';
 
+// ⬇️ Update this each sprint — overrides date-based auto-detection
+const CURRENT_SPRINT_ID = '901713532385'; // Sprint 12 (7/15 - 7/28)
+
 // Extra task IDs to always fetch for specific sprint lists (multi-list tasks missing from view)
 const SPRINT_EXTRA_IDS = {
   '901713532382': ['ATECH-7436', 'ATECH-7339', 'ATECH-7342', 'ATECH-7345', 'ATECH-7607'],
@@ -479,7 +482,10 @@ async function discoverSprints() {
 
 function pickDisplaySprints(allSprints) {
   const now = new Date();
-  const activeIdx = allSprints.findIndex(s => s.start && s.end && now >= s.start && now <= s.end);
+  // Use CURRENT_SPRINT_ID if set, otherwise fall back to date-based detection
+  const activeIdx = CURRENT_SPRINT_ID
+    ? allSprints.findIndex(s => s.id === CURRENT_SPRINT_ID)
+    : allSprints.findIndex(s => s.start && s.end && now >= s.start && now <= s.end);
   if (activeIdx >= 0) {
     const prev = activeIdx > 0 ? allSprints[activeIdx-1] : null;
     const curr = allSprints[activeIdx];
