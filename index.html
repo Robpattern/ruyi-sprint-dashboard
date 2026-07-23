@@ -159,6 +159,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       <div class="sub" id="header-sub">Loading sprints…</div>
     </div>
     <div class="header-right">
+      <span style="font-size:9px;color:#cbd5e1;margin-right:8px">v31d03ca</span>
       <span class="last-synced" id="last-synced">Never synced</span>
       <button class="sync-btn" id="sync-btn" onclick="syncNow()">
         <span class="sync-icon" id="sync-icon">↻</span> Sync
@@ -1101,7 +1102,9 @@ async function syncNow() {
   try {
     // 1. Discover sprints
     const allSprints = await discoverSprints();
+    console.log('[Ruyi] discovered sprints:', allSprints.map(s => `${s.name} (${s.id})`));
     sprintSlots = pickDisplaySprints(allSprints);
+    console.log('[Ruyi] sprint slots:', sprintSlots.map(s => `${s.name} → ${s.role}`));
 
     // 2. Build UI shell
     buildTabs(sprintSlots);
