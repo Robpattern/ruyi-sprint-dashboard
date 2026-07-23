@@ -463,8 +463,19 @@ async function getBoardViewId(listId) {
 }
 
 async function fetchSprintTasks(listId) {
+  // Always fetch from BOTH the board view (catches multi-listed tasks) AND the list API
+  // (catches tasks added to the list after the board view was created). Merge by task id.
   const viewId = await getBoardViewId(listId);
-  const base = viewId ? await fetchViewTasks(viewId) : await fetchListTasks(listId);
+  const [viewTasks, listTasks] = await Promise.all([
+    viewId ? fetchViewTasks(viewId) : Promise.resolve([]),
+    fetchListTasks(listId),
+  ]);
+  const seen = new Set();
+  const base = [...viewTasks, ...listTasks].filter(t => {
+    if (seen.has(t.id)) return false;
+    seen.add(t.id);
+    return true;
+  });
 
   // Supplement with any known extra tasks for this sprint (multi-list tasks missing from view)
   const extraIds = SPRINT_EXTRA_IDS[listId] || [];
