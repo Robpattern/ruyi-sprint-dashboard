@@ -473,11 +473,23 @@ async function fetchSprintTasks(listId) {
 async function discoverSprints() {
   const d = await api(`/v2/folder/${RUYI_FOLDER_ID}/list`);
   const lists = (d.lists || []).filter(l => /Sprint \d+/i.test(l.name));
-  return lists.map(l => {
+  const sprints = lists.map(l => {
     const numMatch = l.name.match(/Sprint (\d+)/i);
     const { start, end } = parseSprintDates(l.name);
     return { id: l.id, name: l.name, num: numMatch ? parseInt(numMatch[1]) : 0, start, end };
   }).sort((a,b) => a.num - b.num);
+
+  // If CURRENT_SPRINT_ID is set but not in the discovered list, add it directly
+  if (CURRENT_SPRINT_ID && !sprints.find(s => s.id === CURRENT_SPRINT_ID)) {
+    const d2 = await api(`/v2/list/${CURRENT_SPRINT_ID}`);
+    if (d2?.id) {
+      const numMatch = (d2.name||'').match(/Sprint (\d+)/i);
+      const { start, end } = parseSprintDates(d2.name||'');
+      sprints.push({ id: d2.id, name: d2.name, num: numMatch ? parseInt(numMatch[1]) : 99, start, end });
+      sprints.sort((a,b) => a.num - b.num);
+    }
+  }
+  return sprints;
 }
 
 function pickDisplaySprints(allSprints) {
