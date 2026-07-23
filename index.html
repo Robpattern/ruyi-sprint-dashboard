@@ -197,6 +197,7 @@ const TEAM_ID = '2323726';
 // Ryan's 18 was double-counting ATECH-7440 parent (3pt) + its subtasks (3x1pt) — true scope is 15pt
 const SPRINT_PLANNED = {
   '901713532382': { 'ryan ruan': 15, 'vincent qiao': 26 },
+  '901713532385': { 'ryan ruan': 15, 'leo.yang': 21, 'vincent qiao': 28 }, // Sprint 12
 };
 
 // Tasks added mid-sprint (date_created > sprint start) — detected via API
@@ -306,6 +307,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closePtsPopo
 ══════════════════════════════════════════ */
 const isTest = t => /Test Bug|测试/.test(t.name || '');
 const getStatus = t => (t.status?.status || t.status || '').toLowerCase();
+const isDone = s => s==='closed'||s==='done'||s==='dev complete'||s==='not doing';
 const memberColor = name => {
   const k = Object.keys(MEMBER_COLORS).find(k => k === (name||'').toLowerCase());
   return k ? MEMBER_COLORS[k] : '#94a3b8';
@@ -563,10 +565,10 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
   tasks = tasks.filter(t => !isTest(t));
   const el = document.getElementById(panelId);
 
-  const closed     = tasks.filter(t => getStatus(t) === 'closed');
+  const closed     = tasks.filter(t => isDone(getStatus(t)));
   const blocked    = tasks.filter(t => getStatus(t) === 'blocked');
   const inProg     = tasks.filter(t => getStatus(t) === 'in progress');
-  const unfinished = tasks.filter(t => getStatus(t) !== 'closed');
+  const unfinished = tasks.filter(t => !isDone(getStatus(t)));
   const totalPts   = tasks.reduce((sum,t) => sum+getPoints(t), 0);
   const closedPts  = closed.reduce((sum,t) => sum+getPoints(t), 0);
 
@@ -580,7 +582,7 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
     (t.assignees||[]).forEach(a => {
       const n = a.username||'?';
       ptsByA[n] = (ptsByA[n]||0) + pts;
-      if (getStatus(t) === 'closed') closedPtsByA[n] = (closedPtsByA[n]||0) + pts;
+      if (isDone(getStatus(t))) closedPtsByA[n] = (closedPtsByA[n]||0) + pts;
     });
   });
   const ptsEntries = Object.entries(ptsByA).sort((a,b)=>b[1]-a[1]);
@@ -846,7 +848,7 @@ function renderActive(panelId, s, tasks) {
   const maxPts = Math.max(...ptsEntries.map(([,v])=>v),1);
   const maxTsk = Math.max(...tskEntries.map(([,v])=>v),1);
 
-  const statusOrder = {'in progress':0,'prioritized':1,'blocked':2,'closed':3};
+  const statusOrder = {'in progress':0,'qa testing':1,'prioritized':2,'blocked':3,'dev complete':4,'closed':4,'done':4,'not doing':5};
   const sorted = [...tasks].sort((a,b)=>(statusOrder[getStatus(a)]??4)-(statusOrder[getStatus(b)]??4));
 
   panelViewMode[panelId] = 'active';
@@ -871,7 +873,7 @@ function renderActive(panelId, s, tasks) {
           const tid = 'breakdown-' + name.replace(/\s+/g,'_');
           const tl = (taskListByA[name]||[]).sort((a,b)=>b.pts-a.pts);
           const breakdownRows = tl.map(tk=>{
-            const done = tk.status==='closed'||tk.status==='done';
+            const done = isDone(tk.status?.status||tk.status||'');
             const statusDot = tk.status==='blocked'?'🚫':tk.status==='in progress'?'🔵':done?'✅':'⬜';
             return `<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-top:1px solid #f1f5f9">
               <span style="font-size:10px;width:16px;text-align:center">${statusDot}</span>
@@ -931,13 +933,14 @@ function renderActive(panelId, s, tasks) {
           const sl  = getStatus(t);
           const badge = sl==='blocked'?'<span class="st-badge st-blocked">BLOCKED</span>'
                       : sl==='in progress'?'<span class="st-badge st-inprogress">IN PROGRESS</span>'
-                      : sl==='closed'?'<span class="st-badge st-done">DONE</span>':'';
-          const bg = sl==='blocked'?'#fff7ed':sl==='closed'?'#f0fdf4':sl==='in progress'?'#eff6ff':'#fafafa';
-          const bl = sl==='blocked'?'#f97316':sl==='closed'?'#10b981':sl==='in progress'?'#3b82f6':'#e2e8f0';
+                      : sl==='qa testing'?'<span class="st-badge" style="background:#0f9d9f;color:#fff">QA</span>'
+                      : isDone(sl)?'<span class="st-badge st-done">DONE</span>':'';
+          const bg = sl==='blocked'?'#fff7ed':isDone(sl)?'#f0fdf4':sl==='in progress'?'#eff6ff':'#fafafa';
+          const bl = sl==='blocked'?'#f97316':isDone(sl)?'#10b981':sl==='in progress'?'#3b82f6':'#e2e8f0';
           const subs = (pts > 8 && t.subtasks?.length) ? t.subtasks.map(sub => {
             const sp = Number(sub.points) || 0;
             const ss = (sub.status?.status||sub.status||'').toLowerCase();
-            const sDone = ss==='closed'||ss==='done';
+            const sDone = isDone(ss);
             return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0 3px 12px;border-top:1px solid rgba(0,0,0,.05)">
               <span style="font-size:9px;color:#94a3b8">↳</span>
               <a href="${sub.url}" target="_blank" style="font-size:10px;font-weight:600;color:#94a3b8;text-decoration:none;white-space:nowrap">${sub.custom_id||''}</a>
@@ -1035,7 +1038,7 @@ function renderPlanning(panelId, s, tasks, prevTasks, blTasks) {
               const subs = (pts > 8 && t.subtasks?.length) ? t.subtasks.map(sub => {
                 const sp = Number(sub.points) || 0;
                 const ss = (sub.status?.status||sub.status||'').toLowerCase();
-                const sDone = ss==='closed'||ss==='done';
+                const sDone = isDone(ss);
                 return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0 3px 12px;border-top:1px solid rgba(0,0,0,.05)">
                   <span style="font-size:9px;color:#94a3b8">↳</span>
                   <a href="${sub.url}" target="_blank" style="font-size:10px;font-weight:600;color:#94a3b8;text-decoration:none;white-space:nowrap">${sub.custom_id||''}</a>
