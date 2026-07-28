@@ -251,6 +251,23 @@ const MEMBER_COLORS = {
   'kevin liu': '#8b5cf6',
 };
 
+// Canonical username aliases — maps any variant to the canonical form used in MEMBER_COLORS/SPRINT_PLANNED.
+// Add entries whenever ClickUp returns a name that differs from the canonical one.
+const ASSIGNEE_ALIASES = {
+  'ryan':        'Ryan Ruan',
+  'ryan ruan':   'Ryan Ruan',
+  'vincent':     'Vincent Qiao',
+  'vincent qiao':'Vincent Qiao',
+  'leo':         'Leo yang',
+  'leo yang':    'Leo yang',
+  'leo.yang':    'Leo yang',
+  'zowie':       'zowie meng',
+  'zowie meng':  'zowie meng',
+};
+function normalizeAssignee(username) {
+  return ASSIGNEE_ALIASES[(username||'').toLowerCase()] || username;
+}
+
 /* ══════════════════════════════════════════
    STATE
 ══════════════════════════════════════════ */
@@ -626,7 +643,7 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
   tasks.forEach(t => {
     const pts = getPoints(t);
     (t.assignees||[]).forEach(a => {
-      const n = a.username||'?';
+      const n = normalizeAssignee(a.username)||'?';
       ptsByA[n] = (ptsByA[n]||0) + pts;
       if (isDone(getStatus(t))) closedPtsByA[n] = (closedPtsByA[n]||0) + pts;
     });
@@ -641,7 +658,7 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
     const pts = getPoints(t);
     const sl  = getStatus(t);
     (t.assignees||[]).forEach(a => {
-      const n = a.username||'?';
+      const n = normalizeAssignee(a.username)||'?';
       if (sl === 'blocked') {
         blockedPtsByA[n] = (blockedPtsByA[n]||0) + pts;
         (blockedTasksByA[n] = blockedTasksByA[n]||[]).push(t);
@@ -868,7 +885,7 @@ function renderActive(panelId, s, tasks) {
     const hasPerAssigneePoints = assignees.some(a => a.points != null);
     const manualSplit = TASK_ASSIGNEE_POINTS[t.custom_id];
     assignees.forEach(a => {
-      const n = a.username||'?';
+      const n = normalizeAssignee(a.username)||'?';
       // Priority: manual TASK_ASSIGNEE_POINTS map → ClickUp API per-assignee → even split
       const share = manualSplit
         ? (manualSplit[a.username] ?? Math.round((pts / assignees.length) * 10) / 10)
@@ -1022,7 +1039,7 @@ function renderPlanning(panelId, s, tasks, prevTasks, blTasks) {
   tasks.forEach(t => {
     const pts = getPoints(t);
     (t.assignees||[]).forEach(a => {
-      const n = a.username||'?';
+      const n = normalizeAssignee(a.username)||'?';
       ptsByA[n] = (ptsByA[n]||0) + pts;
     });
   });
