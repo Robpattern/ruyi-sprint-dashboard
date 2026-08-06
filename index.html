@@ -210,6 +210,22 @@ const SPRINT_EXTRA_IDS = {
     'ATECH-7560',      // Vincent: JD Product List API Integration & Conflict Detection
     'ATECH-7628',      // Ryan + Leo: Bid & bid-history read API for JD Keywords dashboard
   ],
+  '901714732266': [   // Sprint 13 (7/29-8/11): multi-listed tasks missing from list API
+    'ATECH-10973',
+    'ATECH-10972',
+    'ATECH-10980',
+    'ATECH-10989',
+    'ATECH-10992',
+    'ATECH-10979',
+    'ATECH-10994',
+    'ATECH-7629',
+    'ATECH-7560',
+    'ATECH-6488',
+    'ATECH-7563',
+    'ATECH-7565',
+    'ATECH-7793',
+    'ATECH-7436',
+  ],
 };
 const TEAM_ID = '2323726';
 
@@ -424,10 +440,15 @@ function parseSprintDates(name) {
 /* ══════════════════════════════════════════
    API
 ══════════════════════════════════════════ */
-async function api(path, params = {}) {
+async function api(path, params = {}, method = 'GET', body = null) {
   const qs = new URLSearchParams(params).toString();
   const url = `/api/clickup?path=${encodeURIComponent(path)}${qs ? '&' + qs : ''}`;
-  const r = await fetch(url);
+  const opts = { method };
+  if (body !== null) {
+    opts.headers = { 'Content-Type': 'application/json' };
+    opts.body = JSON.stringify(body);
+  }
+  const r = await fetch(url, opts);
   if (!r.ok) throw new Error(`API ${r.status} for ${path}`);
   return r.json();
 }
@@ -456,18 +477,9 @@ async function fetchViewTasks(viewId) {
 }
 
 async function fetchListTasks(listId) {
-  // Use team-level task search with list_ids[] filter — this returns ALL tasks
-  // visible in a list including multi-listed tasks (tasks whose home is another
-  // list but were added to this sprint via "Add to List"). The direct
-  // /list/{id}/task endpoint only returns home-listed tasks and misses these.
   let all = [], page = 0, last = 100;
   while (last === 100 && page < 10) {
-    const d = await api(`/v2/team/${TEAM_ID}/task`, {
-      'list_ids[]': listId,
-      include_closed: false,
-      subtasks: true,
-      page,
-    });
+    const d = await api(`/v2/list/${listId}/task`, { include_closed: false, page });
     all = all.concat(d.tasks || []);
     last = (d.tasks||[]).length;
     page++;
@@ -475,17 +487,49 @@ async function fetchListTasks(listId) {
   return all;
 }
 
+// In-memory cache: listId → viewId
+const _viewIdCache = {};
+
 async function getBoardViewId(listId) {
+  // 1. In-memory cache
+  if (_viewIdCache[listId]) return _viewIdCache[listId];
+
+  // 2. localStorage cache (persists across page refreshes)
+  try {
+    const stored = localStorage.getItem(`cu_view_${listId}`);
+    if (stored) { _viewIdCache[listId] = stored; return stored; }
+  } catch {}
+
+  // 3. Look for an existing task-type view
   try {
     const d = await api(`/v2/list/${listId}/view`);
     const views = d.views || [];
-    // Only use view types that support the /task endpoint
-    const VALID_TYPES = new Set(['board', 'list', 'calendar', 'gantt', 'activity', 'workload']);
-    const board = views.find(v => v.type === 'board')
+    const VALID_TYPES = new Set(['board', 'list', 'table', 'calendar', 'gantt', 'activity', 'workload']);
+    const found = views.find(v => v.type === 'board')
       || views.find(v => v.type === 'list')
       || views.find(v => VALID_TYPES.has(v.type));
-    return board?.id || null;
-  } catch { return null; }
+
+    if (found) {
+      _viewIdCache[listId] = found.id;
+      try { localStorage.setItem(`cu_view_${listId}`, found.id); } catch {}
+      return found.id;
+    }
+
+    // 4. No task view found — auto-create a list view.
+    //    /v2/view/{id}/task returns ALL tasks in a list including multi-listed ones,
+    //    unlike the /v2/list/{id}/task endpoint which only returns home tasks.
+    const result = await api(`/v2/list/${listId}/view`, {}, 'POST', {
+      name: '_dashboard_sync',
+      type: 'list',
+    });
+    const newId = result?.view?.id;
+    if (newId) {
+      _viewIdCache[listId] = newId;
+      try { localStorage.setItem(`cu_view_${listId}`, newId); } catch {}
+      return newId;
+    }
+  } catch (e) { console.warn('getBoardViewId:', e); }
+  return null;
 }
 
 async function fetchSprintTasks(listId) {
