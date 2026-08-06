@@ -456,9 +456,18 @@ async function fetchViewTasks(viewId) {
 }
 
 async function fetchListTasks(listId) {
+  // Use team-level task search with list_ids[] filter — this returns ALL tasks
+  // visible in a list including multi-listed tasks (tasks whose home is another
+  // list but were added to this sprint via "Add to List"). The direct
+  // /list/{id}/task endpoint only returns home-listed tasks and misses these.
   let all = [], page = 0, last = 100;
   while (last === 100 && page < 10) {
-    const d = await api(`/v2/list/${listId}/task`, { include_closed: false, page });
+    const d = await api(`/v2/team/${TEAM_ID}/task`, {
+      'list_ids[]': listId,
+      include_closed: false,
+      subtasks: true,
+      page,
+    });
     all = all.concat(d.tasks || []);
     last = (d.tasks||[]).length;
     page++;
