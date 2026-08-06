@@ -135,6 +135,35 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 
 /* Error banner */
 .error-banner { background: #fee2e2; border: 1px solid #fecaca; border-radius: 8px; padding: 12px 16px; font-size: 12px; color: #dc2626; margin: 18px; }
+
+/* Retro panel */
+.retro-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; padding: 18px 18px 28px; }
+.retro-col { background: white; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.07); display: flex; flex-direction: column; min-height: 340px; }
+.retro-col-header { padding: 14px 16px 10px; border-radius: 12px 12px 0 0; display: flex; align-items: center; gap: 8px; }
+.retro-col-header .retro-icon { font-size: 18px; }
+.retro-col-header .retro-title { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .5px; }
+.retro-col-header .retro-count { margin-left: auto; font-size: 11px; font-weight: 700; opacity: .7; }
+.retro-col.start .retro-col-header { background: #d1fae5; color: #065f46; }
+.retro-col.stop  .retro-col-header { background: #fee2e2; color: #991b1b; }
+.retro-col.cont  .retro-col-header { background: #dbeafe; color: #1e40af; }
+.retro-items { flex: 1; padding: 10px 12px; display: flex; flex-direction: column; gap: 7px; overflow-y: auto; }
+.retro-item { display: flex; align-items: flex-start; gap: 7px; background: #f8fafc; border-radius: 8px; padding: 9px 10px; font-size: 12px; line-height: 1.45; }
+.retro-item-text { flex: 1; word-break: break-word; }
+.retro-item-del { flex-shrink: 0; background: none; border: none; cursor: pointer; color: #cbd5e1; font-size: 14px; padding: 0; line-height: 1; transition: color .12s; }
+.retro-item-del:hover { color: #ef4444; }
+.retro-input-row { padding: 10px 12px 14px; display: flex; gap: 6px; }
+.retro-input { flex: 1; border: 1.5px solid #e2e8f0; border-radius: 8px; padding: 7px 10px; font-size: 12px; font-family: inherit; resize: none; outline: none; transition: border-color .15s; }
+.retro-input:focus { border-color: #3b82f6; }
+.retro-add-btn { flex-shrink: 0; background: #3b82f6; color: white; border: none; border-radius: 8px; width: 32px; cursor: pointer; font-size: 18px; font-weight: 300; display: flex; align-items: center; justify-content: center; transition: background .12s; }
+.retro-add-btn:hover { background: #2563eb; }
+.retro-col.start .retro-add-btn { background: #10b981; }
+.retro-col.start .retro-add-btn:hover { background: #059669; }
+.retro-col.stop  .retro-add-btn { background: #ef4444; }
+.retro-col.stop  .retro-add-btn:hover { background: #dc2626; }
+.retro-sprint-selector { padding: 14px 18px 2px; display: flex; align-items: center; gap: 10px; }
+.retro-sprint-selector label { font-size: 12px; font-weight: 600; color: #64748b; }
+.retro-sprint-selector select { border: 1.5px solid #e2e8f0; border-radius: 7px; padding: 5px 10px; font-size: 12px; font-family: inherit; outline: none; cursor: pointer; background: white; }
+.retro-empty { color: #cbd5e1; font-size: 12px; text-align: center; padding: 20px 0; font-style: italic; }
 </style>
 </head>
 <body>
@@ -159,7 +188,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       <div class="sub" id="header-sub">Loading sprints…</div>
     </div>
     <div class="header-right">
-      <span style="font-size:9px;color:#cbd5e1;margin-right:8px">v31d03ca</span>
+      <span style="font-size:9px;color:#cbd5e1;margin-right:8px">v4-retro</span>
       <span class="last-synced" id="last-synced">Never synced</span>
       <button class="sync-btn" id="sync-btn" onclick="syncNow()">
         <span class="sync-icon" id="sync-icon">↻</span> Sync
@@ -179,6 +208,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 </div>
 
 <div id="panels-container"></div>
+<div id="retro-panel" style="display:none"></div>
 
 <script>
 /* ══════════════════════════════════════════
@@ -490,6 +520,11 @@ async function fetchListTasks(listId) {
 // In-memory cache: listId → viewId
 const _viewIdCache = {};
 
+function _clearViewCache(listId) {
+  delete _viewIdCache[listId];
+  try { localStorage.removeItem(`cu_view_${listId}`); } catch {}
+}
+
 async function getBoardViewId(listId) {
   // 1. In-memory cache
   if (_viewIdCache[listId]) return _viewIdCache[listId];
@@ -500,7 +535,7 @@ async function getBoardViewId(listId) {
     if (stored) { _viewIdCache[listId] = stored; return stored; }
   } catch {}
 
-  // 3. Look for an existing task-type view
+  // 3. Look for an existing task-type view in ClickUp
   try {
     const d = await api(`/v2/list/${listId}/view`);
     const views = d.views || [];
@@ -514,32 +549,30 @@ async function getBoardViewId(listId) {
       try { localStorage.setItem(`cu_view_${listId}`, found.id); } catch {}
       return found.id;
     }
-
-    // 4. No task view found — auto-create a list view.
-    //    /v2/view/{id}/task returns ALL tasks in a list including multi-listed ones,
-    //    unlike the /v2/list/{id}/task endpoint which only returns home tasks.
-    const result = await api(`/v2/list/${listId}/view`, {}, 'POST', {
-      name: '_dashboard_sync',
-      type: 'list',
-    });
-    const newId = result?.view?.id;
-    if (newId) {
-      _viewIdCache[listId] = newId;
-      try { localStorage.setItem(`cu_view_${listId}`, newId); } catch {}
-      return newId;
-    }
   } catch (e) { console.warn('getBoardViewId:', e); }
   return null;
 }
 
 async function fetchSprintTasks(listId) {
-  // Always fetch from BOTH the board view (catches multi-listed tasks) AND the list API
-  // (catches tasks added to the list after the board view was created). Merge by task id.
+  // Fetch from BOTH the board view (catches multi-listed tasks where a view exists)
+  // AND the list API. Use allSettled so a bad view never blocks list tasks.
   const viewId = await getBoardViewId(listId);
-  const [viewTasks, listTasks] = await Promise.all([
+  const [viewResult, listResult] = await Promise.allSettled([
     viewId ? fetchViewTasks(viewId) : Promise.resolve([]),
     fetchListTasks(listId),
   ]);
+
+  let viewTasks = [], listTasks = [];
+  if (viewResult.status === 'fulfilled') {
+    viewTasks = viewResult.value;
+    // If the view returned 0 tasks but we know it exists, it may be a stale/empty cached ID
+    if (viewTasks.length === 0 && viewId) _clearViewCache(listId);
+  } else {
+    console.warn('View fetch failed — clearing cache:', viewResult.reason?.message);
+    _clearViewCache(listId);
+  }
+  if (listResult.status === 'fulfilled') listTasks = listResult.value;
+
   const seen = new Set();
   const base = [...viewTasks, ...listTasks].filter(t => {
     if (seen.has(t.id)) return false;
@@ -622,6 +655,8 @@ function pickDisplaySprints(allSprints) {
 /* ══════════════════════════════════════════
    HEADER / TABS
 ══════════════════════════════════════════ */
+const RETRO_TAB_IDX = -1; // sentinel for the retro tab
+
 function buildTabs(slots) {
   const labels = slots.map(s => {
     const n = s.name.match(/Sprint (\d+)/i)?.[1] || '?';
@@ -629,9 +664,10 @@ function buildTabs(slots) {
          : s.role === 'active' ? `Sprint ${n} Active`
          : `Sprint ${n} Planning`;
   });
-  document.getElementById('tabs-container').innerHTML = labels.map((lbl,i) =>
-    `<div class="tab${i===0?' active':''}" onclick="switchTab(${i})">${lbl}</div>`
-  ).join('');
+  // Sprint tabs + Retro tab
+  document.getElementById('tabs-container').innerHTML =
+    labels.map((lbl,i) => `<div class="tab${i===0?' active':''}" onclick="switchTab(${i})">${lbl}</div>`).join('') +
+    `<div class="tab" onclick="switchTab('retro')" id="retro-tab">🔄 Retro</div>`;
 
   document.getElementById('panels-container').innerHTML = slots.map((_,i) =>
     `<div class="tab-panel${i===0?' active':''}" id="panel-${i}"><div class="loading" style="padding:24px">Loading…</div></div>`
@@ -639,10 +675,21 @@ function buildTabs(slots) {
 }
 
 function switchTab(idx) {
-  currentTab = idx;
-  document.querySelectorAll('.tab').forEach((el,i) => el.classList.toggle('active', i===idx));
-  document.querySelectorAll('.tab-panel').forEach((el,i) => el.classList.toggle('active', i===idx));
-  updateHeader(idx);
+  const isRetro = idx === 'retro';
+  currentTab = isRetro ? RETRO_TAB_IDX : idx;
+
+  document.querySelectorAll('.tab').forEach((el, i) => {
+    if (el.id === 'retro-tab') el.classList.toggle('active', isRetro);
+    else el.classList.toggle('active', !isRetro && i === idx);
+  });
+  document.querySelectorAll('.tab-panel').forEach((el,i) => el.classList.toggle('active', !isRetro && i === idx));
+  document.getElementById('retro-panel').style.display = isRetro ? 'block' : 'none';
+
+  if (isRetro) {
+    renderRetro();
+  } else {
+    updateHeader(idx);
+  }
 }
 
 function updateHeader(idx) {
@@ -1238,8 +1285,112 @@ async function syncNow() {
 }
 
 /* ══════════════════════════════════════════
+   RETRO
+══════════════════════════════════════════ */
+const RETRO_COLS = [
+  { key: 'start', label: 'Start', icon: '▶️',  cls: 'start', desc: 'Things we should start doing' },
+  { key: 'stop',  label: 'Stop',  icon: '🛑',  cls: 'stop',  desc: 'Things we should stop doing' },
+  { key: 'cont',  label: 'Continue', icon: '✅', cls: 'cont', desc: 'Things we should keep doing' },
+];
+
+function _retroKey(sprintId) { return `retro_${sprintId}`; }
+
+function _loadRetro(sprintId) {
+  try { return JSON.parse(localStorage.getItem(_retroKey(sprintId))) || { start:[], stop:[], cont:[] }; }
+  catch { return { start:[], stop:[], cont:[] }; }
+}
+
+function _saveRetro(sprintId, data) {
+  try { localStorage.setItem(_retroKey(sprintId), JSON.stringify(data)); } catch {}
+}
+
+function _retroSprintId() {
+  const sel = document.getElementById('retro-sprint-select');
+  return sel ? sel.value : (sprintSlots.find(s=>s.role==='active')||sprintSlots[sprintSlots.length-1]||{}).id;
+}
+
+function renderRetro() {
+  const el = document.getElementById('retro-panel');
+  if (!el) return;
+
+  const activeId = (sprintSlots.find(s=>s.role==='active')||sprintSlots[sprintSlots.length-1]||{}).id;
+  const sprintId = _retroSprintId() || activeId;
+  const data = _loadRetro(sprintId);
+
+  const sprintOptions = sprintSlots.map(s => {
+    const n = s.name.match(/Sprint (\d+)/i)?.[1] || s.name;
+    const label = `Sprint ${n}` + (s.role==='active'?' (Active)':s.role==='review'?' (Review)':'');
+    return `<option value="${s.id}"${s.id===sprintId?' selected':''}>${label}</option>`;
+  }).join('');
+
+  const colsHtml = RETRO_COLS.map(col => {
+    const items = (data[col.key] || []);
+    const itemsHtml = items.length
+      ? items.map((txt, i) => `
+          <div class="retro-item">
+            <span class="retro-item-text">${txt.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</span>
+            <button class="retro-item-del" onclick="deleteRetroItem('${col.key}',${i})" title="Remove">✕</button>
+          </div>`).join('')
+      : `<div class="retro-empty">No items yet</div>`;
+
+    return `
+      <div class="retro-col ${col.cls}">
+        <div class="retro-col-header">
+          <span class="retro-icon">${col.icon}</span>
+          <span class="retro-title">${col.label}</span>
+          <span class="retro-count">${items.length} item${items.length!==1?'s':''}</span>
+        </div>
+        <div class="retro-items" id="retro-items-${col.key}">${itemsHtml}</div>
+        <div class="retro-input-row">
+          <textarea class="retro-input" id="retro-input-${col.key}" placeholder="${col.desc}…" rows="2"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();addRetroItem('${col.key}')}"></textarea>
+          <button class="retro-add-btn" onclick="addRetroItem('${col.key}')" title="Add">+</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `
+    <div class="retro-sprint-selector">
+      <label>Sprint:</label>
+      <select id="retro-sprint-select" onchange="renderRetro()">${sprintOptions}</select>
+    </div>
+    <div class="retro-grid">${colsHtml}</div>`;
+}
+
+function addRetroItem(colKey) {
+  const sprintId = _retroSprintId();
+  const input = document.getElementById(`retro-input-${colKey}`);
+  const text = (input?.value || '').trim();
+  if (!text) return;
+  const data = _loadRetro(sprintId);
+  data[colKey] = [...(data[colKey]||[]), text];
+  _saveRetro(sprintId, data);
+  input.value = '';
+  renderRetro();
+  // Re-focus the same column's input
+  document.getElementById(`retro-input-${colKey}`)?.focus();
+}
+
+function deleteRetroItem(colKey, idx) {
+  const sprintId = _retroSprintId();
+  const data = _loadRetro(sprintId);
+  data[colKey] = (data[colKey]||[]).filter((_,i)=>i!==idx);
+  _saveRetro(sprintId, data);
+  renderRetro();
+}
+
+/* ══════════════════════════════════════════
    INIT
 ══════════════════════════════════════════ */
+// Clear any empty-view IDs that may have been cached by a previous build
+// (programmatically-created ClickUp views are empty by default and not useful)
+try {
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith('cu_view_')) localStorage.removeItem(k);
+  }
+} catch {}
+
 syncNow();
 setInterval(() => {
   if (syncedAt) document.getElementById('last-synced').textContent = `Synced ${fmtTime(syncedAt)}`;
