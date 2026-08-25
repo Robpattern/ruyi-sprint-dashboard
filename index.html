@@ -188,7 +188,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       <div class="sub" id="header-sub">Loading sprints…</div>
     </div>
     <div class="header-right">
-      <span style="font-size:9px;color:#cbd5e1;margin-right:8px">v7-datefix</span>
+      <span style="font-size:9px;color:#cbd5e1;margin-right:8px">v8-qahardening</span>
       <span class="last-synced" id="last-synced">Never synced</span>
       <button class="sync-btn" id="sync-btn" onclick="syncNow()">
         <span class="sync-icon" id="sync-icon">↻</span> Sync
@@ -242,7 +242,7 @@ const SPRINT_EXTRA_IDS = {
     'ATECH-7560',      // Vincent: JD Product List API Integration & Conflict Detection
     'ATECH-7628',      // Ryan + Leo: Bid & bid-history read API for JD Keywords dashboard
   ],
-  // Sprint 13 entries removed: the auto-scan (fetchMultiListedFromSources, using
+  // Sprint 13 entries removed: the auto-scan (multiListedForSprint, using
   // ClickUp's `locations` field) now covers these automatically, and several of
   // the IDs previously hardcoded here had since been re-carried into Sprint 14 —
   // hardcoding them would have shown stale/wrong data going forward.
@@ -388,24 +388,43 @@ const memberColor = name => {
 const memberInitials = name =>
   (name||'?').split(' ').map(p=>p[0]).join('').slice(0,2).toUpperCase();
 
-// Renders assignee line — shows per-person split when task is in TASK_ASSIGNEE_POINTS
+// ClickUp task/list names, usernames, etc. are free-text set by anyone with edit
+// access (or by whatever external system syncs into ClickUp). Escape before
+// dropping into innerHTML anywhere, so a task titled e.g. "<img src=x onerror=…>"
+// can't execute in the dashboard's origin.
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// Renders assignee line — shows per-person split when task is in TASK_ASSIGNEE_POINTS.
+// Falls back to ClickUp group/team assignment when no individual is assigned,
+// instead of silently showing "Unassigned" for group-assigned work.
 function renderAssignees(t) {
   const assignees = t.assignees||[];
-  if (!assignees.length) return 'Unassigned';
+  if (!assignees.length) {
+    const groups = t.group_assignees||[];
+    if (groups.length) return groups.map(g => `👥 ${escapeHtml(g.name||g.username||'Team')}`).join(', ');
+    return 'Unassigned';
+  }
   const split = TASK_ASSIGNEE_POINTS[t.custom_id];
   if (split && assignees.length > 1) {
     return assignees.map(a => {
-      const first = a.username.split(' ')[0];
+      const first = escapeHtml((a.username||'?').split(' ')[0]);
       const pts = split[a.username];
       return pts != null ? `${first} <span style="font-size:10px;font-weight:700;color:#6d28d9">${pts}pt</span>` : first;
     }).join(' · ');
   }
-  return assignees.map(a => a.username.split(' ')[0]).join(', ');
+  return assignees.map(a => escapeHtml((a.username||'?').split(' ')[0])).join(', ');
 }
 
 function getPoints(t) {
-  return FALLBACK_POINTS[t.custom_id]
-    ?? (t.points != null ? Number(t.points) || 0 : 0);
+  // Live ClickUp data wins whenever it's present — FALLBACK_POINTS is a manual
+  // seed for old sprints where the REST API used to return null, and it must
+  // never be allowed to permanently shadow a real (possibly since-corrected)
+  // value. This is the same "hardcoded override goes stale silently" pattern
+  // that caused the Sprint 13/CURRENT_SPRINT_ID bugs — same fix here: prefer live.
+  if (t.points != null) return Number(t.points) || 0;
+  return FALLBACK_POINTS[t.custom_id] ?? 0;
 }
 
 // Returns { pts, html } — pts is what to use for math, html is the clickable points badge.
@@ -437,9 +456,31 @@ function fmtTime(d) {
   return `${Math.round(diff/60)}h ago`;
 }
 
-function parseSprintDates(name) {
-  // Matches "Sprint N (M/DD - M/DD)" or "Sprint N (M/DD/YY - M/DD/YY)"
-  const m = name.match(/\((\d+)\/(\d+)(?:\/(\d+))?\s*-\s*(\d+)\/(\d+)(?:\/(\d+))?\)/);
+// Team Ruyi is China-based (task content is full of 京东/天猫 references); sprint
+// "days" are defined in China Standard Time (UTC+8, no DST) regardless of which
+// timezone the person viewing the dashboard happens to be in. Without this, a
+// sprint boundary comparison done with the viewer's local `new Date()` can
+// disagree with the team about which sprint is "active today" by several hours.
+const CHINA_OFFSET_MS = 8 * 3600 * 1000;
+
+// Given any epoch instant, returns {start, end} as real epoch instants spanning
+// 00:00:00.000–23:59:59.999 of the China-calendar-day that instant falls on.
+// Because these are plain epoch-based Date objects, comparing them against
+// `new Date()` is correct no matter what timezone the browser itself is in.
+function chinaDateBounds(epochMs) {
+  const shifted = new Date(epochMs + CHINA_OFFSET_MS);
+  const y = shifted.getUTCFullYear(), m = shifted.getUTCMonth(), d = shifted.getUTCDate();
+  const start = new Date(Date.UTC(y, m, d, 0, 0, 0, 0) - CHINA_OFFSET_MS);
+  const end   = new Date(Date.UTC(y, m, d, 23, 59, 59, 999) - CHINA_OFFSET_MS);
+  return { start, end };
+}
+
+// Fallback only — used when a list has no start_date/due_date set in ClickUp.
+// Matches "Sprint N (M/DD - M/DD)" or "Sprint N (M/DD/YY - M/DD/YY)" out of the
+// display name and guesses the year. Fragile by nature (relies on the name
+// staying in sync with reality) — prefer sprintDatesFromList() wherever possible.
+function parseSprintDatesFromName(name) {
+  const m = (name||'').match(/\((\d+)\/(\d+)(?:\/(\d+))?\s*-\s*(\d+)\/(\d+)(?:\/(\d+))?\)/);
   if (!m) return { start: null, end: null };
   const now = new Date();
   const yr = now.getFullYear();
@@ -447,15 +488,28 @@ function parseSprintDates(name) {
   const endYr   = m[6] ? (parseInt(m[6]) < 100 ? 2000 + parseInt(m[6]) : parseInt(m[6])) : startYr;
   let start = new Date(startYr, parseInt(m[1])-1, parseInt(m[2]));
   let end   = new Date(endYr,   parseInt(m[4])-1, parseInt(m[5]));
-  end.setHours(23, 59, 59, 999); // end date is inclusive through the last moment of that day
-  // If both parsed to this year and end appears to be before start (year boundary), bump end
+  end.setHours(23, 59, 59, 999);
   if (end < start) end.setFullYear(end.getFullYear() + 1);
-  // If end is >5 months ago relative to now, assume next year
   if (end < new Date(now - 150*86400000)) {
     start.setFullYear(start.getFullYear()+1);
     end.setFullYear(end.getFullYear()+1);
   }
   return { start, end };
+}
+
+// Primary date source: ClickUp's own start_date/due_date epoch fields on the
+// list object (returned by both /v2/folder/{id}/list and /v2/list/{id}), which
+// are authoritative and immune to a sprint list being renamed or mistyped.
+// Note ClickUp's due_date is NOT end-of-day — it's a fixed day-count offset from
+// start_date, landing mid-morning China time — so we take just the calendar day
+// from each field and expand to full-day boundaries ourselves.
+function sprintDatesFromList(l) {
+  if (l.start_date && l.due_date) {
+    const start = chinaDateBounds(Number(l.start_date)).start;
+    const end   = chinaDateBounds(Number(l.due_date)).end;
+    return { start, end };
+  }
+  return parseSprintDatesFromName(l.name || '');
 }
 
 /* ══════════════════════════════════════════
@@ -476,10 +530,18 @@ async function api(path, params = {}, method = 'GET', body = null) {
 
 // Fetch full detail (with subtasks) for a batch of task stubs, rolling up subtask
 // points onto the parent when the parent itself has no points set (matches what
-// the ClickUp UI displays).
+// the ClickUp UI displays). Skips the detail call entirely for tasks that
+// already have a live points value — that's the common case, and re-fetching
+// full detail for every single task regardless was firing dozens of redundant
+// ClickUp API calls per sync (real rate-limit risk with several people viewing
+// the dashboard). The tradeoff: tasks skipped this way won't have `.subtasks`
+// populated, so the ">8pt subtask breakdown" UI won't expand for them — but the
+// points math itself (the thing that actually matters) is already correct.
 async function fetchDetailedWithRollup(taskStubs) {
-  const detailed = await Promise.allSettled(taskStubs.map(t => api(`/v2/task/${t.id}`, { include_subtasks: true })));
-  return detailed.filter(r=>r.status==='fulfilled'&&r.value?.id).map(r => {
+  const needsDetail = taskStubs.filter(t => t.points == null);
+  const alreadyFine = taskStubs.filter(t => t.points != null);
+  const detailed = await Promise.allSettled(needsDetail.map(t => api(`/v2/task/${t.id}`, { include_subtasks: true })));
+  const resolved = detailed.filter(r=>r.status==='fulfilled'&&r.value?.id).map(r => {
     const task = r.value;
     if ((task.points == null) && task.subtasks?.length) {
       const rollup = task.subtasks.reduce((s, sub) => s + (Number(sub.points) || 0), 0);
@@ -487,23 +549,30 @@ async function fetchDetailedWithRollup(taskStubs) {
     }
     return task;
   });
+  return [...alreadyFine, ...resolved];
 }
+
+// Hard page cap as a last-resort safety net against a runaway loop, not a
+// design target — warn loudly if a fetch ever actually hits it, since that
+// means results are being silently truncated.
+const MAX_PAGES = 20;
 
 async function fetchViewTasks(viewId) {
   let all = [], page = 0, last = 100;
-  while (last === 100 && page < 10) {
+  while (last === 100 && page < MAX_PAGES) {
     const d = await api(`/v2/view/${viewId}/task`, { page });
     const batch = d.tasks || [];
     all = all.concat(await fetchDetailedWithRollup(batch));
     last = batch.length;
     page++;
   }
+  if (page >= MAX_PAGES) console.warn(`[Ruyi] view ${viewId} hit the ${MAX_PAGES}-page cap — results may be truncated.`);
   return all;
 }
 
 async function fetchListTasks(listId, includeClosed = false, includeSubtasks = false) {
   let all = [], page = 0, last = 100;
-  while (last === 100 && page < 10) {
+  while (last === 100 && page < MAX_PAGES) {
     const params = { include_closed: includeClosed, page };
     if (includeSubtasks) params.subtasks = true;
     const d = await api(`/v2/list/${listId}/task`, params);
@@ -511,6 +580,7 @@ async function fetchListTasks(listId, includeClosed = false, includeSubtasks = f
     last = (d.tasks||[]).length;
     page++;
   }
+  if (page >= MAX_PAGES) console.warn(`[Ruyi] list ${listId} hit the ${MAX_PAGES}-page cap — results may be truncated.`);
   return all;
 }
 
@@ -519,22 +589,25 @@ async function fetchListTasks(listId, includeClosed = false, includeSubtasks = f
 // sprint's own /list/{id}/task endpoint never sees it — only the task's home list
 // does. ClickUp DOES report the extra membership on each task's `locations` array
 // in the bulk list-task response, so we scan every known source/backlog list and
-// pull out any task whose `locations` includes the target sprint list. This means
-// new sprints pick up multi-listed tasks automatically — no manual ID list needed.
-const SOURCE_LISTS = [BACKLOG_LIST_ID];
-
-async function fetchMultiListedFromSources(sprintListId) {
+// pull out any task whose `locations` includes the target sprint list.
+//
+// Fetched ONCE per sync (not once per sprint tab) across every non-sprint list
+// in the folder (see discoverSprints' sourceListIds — dynamic, not hardcoded to
+// one backlog list), then filtered per sprint slot from the same in-memory copy.
+async function fetchSourceListsTasks(sourceListIds) {
   const results = await Promise.allSettled(
-    SOURCE_LISTS.map(id => fetchListTasks(id, true, true))
+    sourceListIds.map(id => fetchListTasks(id, true, true))
   );
-  const matched = [];
-  results.forEach(r => {
-    if (r.status !== 'fulfilled') return;
-    r.value.forEach(t => {
-      if ((t.locations || []).some(loc => loc.id === sprintListId)) matched.push(t);
-    });
+  const all = [];
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') all.push(...r.value);
+    else console.warn(`[Ruyi] source list ${sourceListIds[i]} fetch failed:`, r.reason?.message);
   });
-  // Re-fetch with subtask rollup so points display consistently with view-sourced tasks
+  return all;
+}
+
+function multiListedForSprint(sourceTasks, sprintListId) {
+  const matched = sourceTasks.filter(t => (t.locations || []).some(loc => loc.id === sprintListId));
   return fetchDetailedWithRollup(matched);
 }
 
@@ -574,11 +647,12 @@ async function getBoardViewId(listId) {
   return null;
 }
 
-async function fetchSprintTasks(listId) {
+async function fetchSprintTasks(listId, sourceTasks) {
   // Fetch from all three sources in parallel:
   //  1. The board view, if one exists (catches multi-listed tasks ClickUp's own board renders)
   //  2. The list API (home tasks)
-  //  3. Known source/backlog lists, filtered to tasks multi-listed into this sprint (root-cause fix — automatic)
+  //  3. sourceTasks (already fetched once for the whole sync — see syncNow), filtered
+  //     to tasks multi-listed into this sprint (root-cause fix — automatic)
   // Use allSettled so a failure in any one source never blocks the others.
   // include_closed:true is essential here — a sprint's own DONE/Closed tasks
   // are exactly what the dashboard needs to compute completed points and %
@@ -588,7 +662,7 @@ async function fetchSprintTasks(listId) {
   const [viewResult, listResult, multiListedResult] = await Promise.allSettled([
     viewId ? fetchViewTasks(viewId) : Promise.resolve([]),
     fetchListTasks(listId, true, true),
-    fetchMultiListedFromSources(listId),
+    multiListedForSprint(sourceTasks, listId),
   ]);
 
   let viewTasks = [], listTasks = [], multiListedTasks = [];
@@ -632,12 +706,20 @@ async function fetchSprintTasks(listId) {
 /* ══════════════════════════════════════════
    SPRINT DISCOVERY
 ══════════════════════════════════════════ */
+// Returns { sprints, sourceListIds }. sourceListIds is every folder list that
+// ISN'T a sprint (e.g. "AdTech Backlog") — used by fetchSourceListsTasks
+// to auto-detect multi-listed tasks. Computed dynamically here (rather than a
+// hardcoded array) so a newly-created second backlog list is picked up
+// automatically instead of silently going unscanned.
 async function discoverSprints() {
   const d = await api(`/v2/folder/${RUYI_FOLDER_ID}/list`);
-  const lists = (d.lists || []).filter(l => /Sprint \d+/i.test(l.name));
+  const allLists = d.lists || [];
+  const lists = allLists.filter(l => /Sprint \d+/i.test(l.name));
+  const sourceListIds = allLists.filter(l => !/Sprint \d+/i.test(l.name)).map(l => l.id);
+
   const sprints = lists.map(l => {
     const numMatch = l.name.match(/Sprint (\d+)/i);
-    const { start, end } = parseSprintDates(l.name);
+    const { start, end } = sprintDatesFromList(l);
     return { id: l.id, name: l.name, num: numMatch ? parseInt(numMatch[1]) : 0, start, end };
   }).sort((a,b) => a.num - b.num);
 
@@ -646,12 +728,12 @@ async function discoverSprints() {
     const d2 = await api(`/v2/list/${CURRENT_SPRINT_ID}`);
     if (d2?.id) {
       const numMatch = (d2.name||'').match(/Sprint (\d+)/i);
-      const { start, end } = parseSprintDates(d2.name||'');
+      const { start, end } = sprintDatesFromList(d2);
       sprints.push({ id: d2.id, name: d2.name, num: numMatch ? parseInt(numMatch[1]) : 99, start, end });
       sprints.sort((a,b) => a.num - b.num);
     }
   }
-  return sprints;
+  return { sprints, sourceListIds: sourceListIds.length ? sourceListIds : [BACKLOG_LIST_ID] };
 }
 
 function pickDisplaySprints(allSprints) {
@@ -804,14 +886,19 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
     });
   });
 
-  // Build commitment rows using planned values when available
-  const commitNames = Object.keys(plannedMap).length
-    ? Object.keys(plannedMap)
-    : Object.keys(ptsByA);
+  // Build commitment rows using planned values when available. hasPlan tracks
+  // whether SPRINT_PLANNED actually has a manually-confirmed target for this
+  // sprint at all — most sprints don't (only 10 and 12 do today). Previously,
+  // when absent, "planned" silently defaulted to equal "delivered" for every
+  // person, which made the UI always claim "100% of commitment met" even though
+  // no commitment had ever been recorded — indistinguishable from a real,
+  // verified on-target sprint. Now that's shown honestly as "no target set."
+  const hasPlan = Object.keys(plannedMap).length > 0;
+  const commitNames = hasPlan ? Object.keys(plannedMap) : Object.keys(ptsByA);
   const commitRows = commitNames.map(nameKey => {
     const lk        = nameKey.toLowerCase();
     const findKey   = obj => Object.keys(obj).find(k => k.toLowerCase() === lk) || '';
-    const planned   = plannedMap[nameKey] ?? ptsByA[findKey(ptsByA)] ?? 0;
+    const planned   = hasPlan ? (plannedMap[nameKey] ?? 0) : null;
     const delivered = closedPtsByA[findKey(closedPtsByA)] || 0;
     const bPts      = blockedPtsByA[findKey(blockedPtsByA)] || 0;
     const iPts      = inProgPtsByA[findKey(inProgPtsByA)]  || 0;
@@ -820,7 +907,7 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
     const iTasks    = inProgTasksByA[findKey(inProgTasksByA)]   || [];
     const oTasks    = otherTasksByA[findKey(otherTasksByA)]     || [];
     const accounted = delivered + bPts + iPts + oPts;
-    const delta     = delivered - planned;
+    const delta     = planned != null ? delivered - planned : null;
     const displayName = nameKey.split(' ')[0].charAt(0).toUpperCase() + nameKey.split(' ')[0].slice(1);
     const color = memberColor(lk);
     return { displayName, planned, delivered, bPts, iPts, oPts, bTasks, iTasks, oTasks, accounted, delta, color };
@@ -867,17 +954,17 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
             return `<div style="display:flex;align-items:center;gap:6px;padding:4px 6px;background:${bg};border-left:2px solid ${border};border-radius:4px;margin-top:4px">
               <a href="${t.url}" target="_blank" style="font-size:10px;font-weight:700;color:#64748b;white-space:nowrap;text-decoration:none">${t.custom_id}</a>
               ${badge}
-              <span style="font-size:11px;flex:1;color:#374151">${t.name.length>55?t.name.slice(0,55)+'…':t.name}</span>
+              <span style="font-size:11px;flex:1;color:#374151">${escapeHtml(t.name.length>55?t.name.slice(0,55)+'…':t.name)}</span>
               ${pts ? `<span style="font-size:11px;font-weight:700;color:#6d28d9;white-space:nowrap">${pts}pt</span>` : ''}
             </div>`;
           }).join('');
-          const base      = Math.max(planned, accounted, 1);
+          const base      = Math.max(planned ?? 0, accounted, 1);
           const dPct      = Math.min(Math.round(delivered/base*100), 100);
           const bPct      = Math.min(Math.round(bPts/base*100), 100 - dPct);
           const iPct      = Math.min(Math.round(iPts/base*100), 100 - dPct - bPct);
-          const deltaColor= delta >= 0 ? '#059669' : '#dc2626';
-          const deltaLabel= delta > 0 ? `+${delta}` : `${delta}`;
-          const pct       = Math.round(delivered/Math.max(planned,1)*100);
+          const deltaColor= delta == null ? '#94a3b8' : delta >= 0 ? '#059669' : '#dc2626';
+          const deltaLabel= delta == null ? 'no target set' : delta > 0 ? `+${delta}` : `${delta}`;
+          const committedLabel = planned == null ? `${delivered}pt delivered` : `${delivered}/${planned}pt committed`;
           // breakdown tags
           const tags = [];
           if (delivered) tags.push(`<span style="color:#059669;font-weight:600">✅ ${delivered}pt done</span>`);
@@ -891,7 +978,7 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
                 <div class="av" style="background:${color};width:22px;height:22px;font-size:9px">${displayName[0]}</div>
                 <span style="font-size:13px;font-weight:700">${displayName}</span>
               </div>
-              <span style="font-size:11px;color:#64748b">${delivered}/${planned}pt committed &nbsp;<span style="font-weight:700;color:${deltaColor}">(${deltaLabel})</span></span>
+              <span style="font-size:11px;color:#64748b">${committedLabel} &nbsp;<span style="font-weight:700;color:${deltaColor}">(${deltaLabel})</span></span>
             </div>
             <div style="height:10px;background:#f1f5f9;border-radius:5px;overflow:hidden;display:flex">
               <div style="height:100%;width:${dPct}%;background:${color};transition:width .4s"></div>
@@ -917,7 +1004,7 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
               <span style="font-size:10px;color:#64748b">${t.date}</span>
             </div>
             <div style="flex:1">
-              <div class="tname"><a href="https://app.clickup.com/t/${t.id}" target="_blank" style="color:inherit;text-decoration:none">${t.name}</a></div>
+              <div class="tname"><a href="https://app.clickup.com/t/${t.id}" target="_blank" style="color:inherit;text-decoration:none">${escapeHtml(t.name)}</a></div>
               <div class="ta">${t.who} · ${t.note}</div>
             </div>
             <div style="font-size:14px;font-weight:800;color:#6d28d9">${t.pts>0?t.pts+'pt':'—'}</div>
@@ -928,7 +1015,7 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
         <div class="card-title">✅ Completed (${closed.length})</div>
         ${closed.length===0 ? '<div class="loading">None yet</div>' : closed.map(t=>{
           const pts=getPoints(t);
-          return `<div class="task-row done-task"><div class="task-id"><a href="${t.url}" target="_blank">${t.custom_id||t.id}</a></div><div class="task-name">${t.name}</div>${pts?`<span class="task-pts">${pts}pt</span>`:''}<div class="task-who">${(t.assignees||[]).map(a=>a.username.split(' ')[0]).join(', ')||'—'}</div></div>`;
+          return `<div class="task-row done-task"><div class="task-id"><a href="${t.url}" target="_blank">${t.custom_id||t.id}</a></div><div class="task-name">${escapeHtml(t.name)}</div>${pts?`<span class="task-pts">${pts}pt</span>`:''}<div class="task-who">${(t.assignees||[]).map(a=>escapeHtml((a.username||'?').split(' ')[0])).join(', ')||'—'}</div></div>`;
         }).join('')}
       </div>
 
@@ -945,7 +1032,7 @@ function renderReview(panelId, s, tasks, showBackBtn = true) {
           const bl = sl==='blocked'?'#ef4444':sl==='in progress'?'#3b82f6':'#f59e0b';
           return `<div class="sprint-item" style="background:${bg};border-left:3px solid ${bl}">
             <div style="min-width:88px"><div class="tid"><a href="${t.url}" target="_blank" style="color:#3b82f6">${t.custom_id||t.id}</a></div>${badge}</div>
-            <div style="flex:1"><div class="tname"><a href="${t.url}" target="_blank" style="color:inherit;text-decoration:none">${t.name}</a></div><div class="ta">${renderAssignees(t)}</div></div>
+            <div style="flex:1"><div class="tname"><a href="${t.url}" target="_blank" style="color:inherit;text-decoration:none">${escapeHtml(t.name)}</a></div><div class="ta">${renderAssignees(t)}</div></div>
             ${ptsHtml}
           </div>`;
         }).join('')}
@@ -1073,7 +1160,7 @@ function renderActive(panelId, s, tasks) {
             return `<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-top:1px solid #f1f5f9">
               <span style="font-size:10px;width:16px;text-align:center">${statusDot}</span>
               <a href="${tk.url}" target="_blank" style="font-size:10px;font-weight:600;color:#94a3b8;text-decoration:none;white-space:nowrap">${tk.id}</a>
-              <span style="font-size:11px;flex:1;color:${done?'#94a3b8':'#374151'};${done?'text-decoration:line-through':''};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${tk.name}</span>
+              <span style="font-size:11px;flex:1;color:${done?'#94a3b8':'#374151'};${done?'text-decoration:line-through':''};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(tk.name)}</span>
               <span style="font-size:11px;font-weight:700;color:${color};white-space:nowrap">${tk.pts}pt${tk.shared?` <span style="font-size:9px;color:#94a3b8">(of ${tk.full})</span>`:''}</span>
             </div>`;
           }).join('');
@@ -1114,7 +1201,7 @@ function renderActive(panelId, s, tasks) {
             const {html:ptsHtml}=getPointsDisplay(t);
             return `<div class="sprint-item" style="background:#fff7f7;border-left:3px solid #ef4444">
               <div style="min-width:88px"><div class="tid"><a href="${t.url}" target="_blank">${t.custom_id}</a></div><span class="st-badge st-blocked">BLOCKED</span></div>
-              <div style="flex:1"><div class="tname">${t.name}</div><div class="ta">${renderAssignees(t)}</div></div>
+              <div style="flex:1"><div class="tname">${escapeHtml(t.name)}</div><div class="ta">${renderAssignees(t)}</div></div>
               ${ptsHtml}
             </div>`;
           }).join('')}
@@ -1139,7 +1226,7 @@ function renderActive(panelId, s, tasks) {
             return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0 3px 12px;border-top:1px solid rgba(0,0,0,.05)">
               <span style="font-size:9px;color:#94a3b8">↳</span>
               <a href="${sub.url}" target="_blank" style="font-size:10px;font-weight:600;color:#94a3b8;text-decoration:none;white-space:nowrap">${sub.custom_id||''}</a>
-              <span style="font-size:11px;flex:1;color:${sDone?'#94a3b8':'#374151'};${sDone?'text-decoration:line-through':''}">${(sub.name||'').length>50?(sub.name||'').slice(0,50)+'…':(sub.name||'')}</span>
+              <span style="font-size:11px;flex:1;color:${sDone?'#94a3b8':'#374151'};${sDone?'text-decoration:line-through':''}">${escapeHtml((sub.name||'').length>50?(sub.name||'').slice(0,50)+'…':(sub.name||''))}</span>
               ${sp?`<span style="font-size:10px;font-weight:700;color:#6d28d9">${sp}pt</span>`:''}
               ${sDone?'<span style="font-size:9px;color:#059669">✓</span>':''}
             </div>`;
@@ -1147,7 +1234,7 @@ function renderActive(panelId, s, tasks) {
           return `<div class="sprint-item" style="background:${bg};border-left:3px solid ${bl};flex-direction:column;align-items:stretch;padding:0">
             <div style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px">
               <div style="min-width:88px"><div class="tid"><a href="${t.url}" target="_blank">${t.custom_id}</a></div>${badge}</div>
-              <div style="flex:1"><div class="tname">${t.name}</div><div class="ta">${renderAssignees(t)}</div></div>
+              <div style="flex:1"><div class="tname">${escapeHtml(t.name)}</div><div class="ta">${renderAssignees(t)}</div></div>
               ${ptsHtml}
             </div>
             ${subs}
@@ -1206,7 +1293,7 @@ function renderPlanning(panelId, s, tasks, prevTasks, blTasks) {
           ? '<div style="color:#10b981;font-size:13px">✅ No in-progress items.</div>'
           : carryover.map(t=>{
               const pts=getPoints(t);
-              return `<div class="task-row"><div class="task-id"><a href="${t.url}" target="_blank">${t.custom_id}</a></div><div class="task-name">${t.name}</div>${pts?`<span class="task-pts">${pts}pt</span>`:''}<div class="task-who">${(t.assignees||[]).map(a=>a.username.split(' ')[0]).join(', ')||'—'}</div></div>`;
+              return `<div class="task-row"><div class="task-id"><a href="${t.url}" target="_blank">${t.custom_id}</a></div><div class="task-name">${escapeHtml(t.name)}</div>${pts?`<span class="task-pts">${pts}pt</span>`:''}<div class="task-who">${(t.assignees||[]).map(a=>escapeHtml((a.username||'?').split(' ')[0])).join(', ')||'—'}</div></div>`;
             }).join('')}
       </div>
 
@@ -1237,7 +1324,7 @@ function renderPlanning(panelId, s, tasks, prevTasks, blTasks) {
                 return `<div style="display:flex;align-items:center;gap:6px;padding:3px 0 3px 12px;border-top:1px solid rgba(0,0,0,.05)">
                   <span style="font-size:9px;color:#94a3b8">↳</span>
                   <a href="${sub.url}" target="_blank" style="font-size:10px;font-weight:600;color:#94a3b8;text-decoration:none;white-space:nowrap">${sub.custom_id||''}</a>
-                  <span style="font-size:11px;flex:1;color:${sDone?'#94a3b8':'#374151'};${sDone?'text-decoration:line-through':''}">${(sub.name||'').length>50?(sub.name||'').slice(0,50)+'…':(sub.name||'')}</span>
+                  <span style="font-size:11px;flex:1;color:${sDone?'#94a3b8':'#374151'};${sDone?'text-decoration:line-through':''}">${escapeHtml((sub.name||'').length>50?(sub.name||'').slice(0,50)+'…':(sub.name||''))}</span>
                   ${sp?`<span style="font-size:10px;font-weight:700;color:#6d28d9">${sp}pt</span>`:''}
                   ${sDone?'<span style="font-size:9px;color:#059669">✓</span>':''}
                 </div>`;
@@ -1245,7 +1332,7 @@ function renderPlanning(panelId, s, tasks, prevTasks, blTasks) {
               return `<div class="sprint-item" style="background:#eff6ff;border-left:3px solid #3b82f6;flex-direction:column;align-items:stretch;padding:0">
                 <div style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px">
                   <div style="min-width:88px"><div class="tid"><a href="${t.url}" target="_blank">${t.custom_id}</a></div>${unestBadge}</div>
-                  <div style="flex:1"><div class="tname">${t.name}</div><div class="ta">${renderAssignees(t)}</div></div>
+                  <div style="flex:1"><div class="tname">${escapeHtml(t.name)}</div><div class="ta">${renderAssignees(t)}</div></div>
                   ${ptsHtml}
                 </div>
                 ${subs}
@@ -1258,7 +1345,7 @@ function renderPlanning(panelId, s, tasks, prevTasks, blTasks) {
         <table class="bl-table"><thead><tr><th style="width:90px">ID</th><th>Task</th><th style="width:80px">Priority</th><th style="width:110px">Assignee</th></tr></thead><tbody>
         ${candidates.map(t=>{
           const p=t.priority?.priority||'normal';
-          return `<tr><td><a href="${t.url}" target="_blank">${t.custom_id}</a></td><td style="font-weight:500">${t.name}</td><td><span class="pri-badge pri-${p}">${p}</span></td><td style="color:#64748b;font-size:11px">${(t.assignees||[]).map(a=>a.username.split(' ')[0]).join(', ')||'—'}</td></tr>`;
+          return `<tr><td><a href="${t.url}" target="_blank">${escapeHtml(t.custom_id)}</a></td><td style="font-weight:500">${escapeHtml(t.name)}</td><td><span class="pri-badge pri-${p}">${escapeHtml(p)}</span></td><td style="color:#64748b;font-size:11px">${(t.assignees||[]).map(a=>escapeHtml((a.username||'?').split(' ')[0])).join(', ')||'—'}</td></tr>`;
         }).join('')}
         </tbody></table>
       </div>
@@ -1276,9 +1363,12 @@ async function syncNow() {
   document.getElementById('last-synced').textContent = 'Syncing…';
 
   try {
-    // 1. Discover sprints
-    const allSprints = await discoverSprints();
+    // 1. Discover sprints (a hard failure here really does mean nothing can render,
+    // since we don't even know what sprints exist — the outer catch below is the
+    // right place to show a full-page error for this specific step).
+    const { sprints: allSprints, sourceListIds } = await discoverSprints();
     console.log('[Ruyi] discovered sprints:', allSprints.map(s => `${s.name} (${s.id})`));
+    console.log('[Ruyi] source lists for multi-list scan:', sourceListIds);
     sprintSlots = pickDisplaySprints(allSprints);
     console.log('[Ruyi] sprint slots:', sprintSlots.map(s => `${s.name} → ${s.role}`));
 
@@ -1286,30 +1376,53 @@ async function syncNow() {
     buildTabs(sprintSlots);
     updateHeader(0);
 
-    // 3. Fetch tasks for all slots + backlog in parallel
-    const taskPromises = sprintSlots.map(s => fetchSprintTasks(s.id));
-    const blPromise = fetchListTasks(BACKLOG_LIST_ID);
-    const [blTasks, ...taskArrays] = await Promise.all([blPromise, ...taskPromises]);
-    cachedBlTasks = blTasks;
+    // 3a. Fetch every non-sprint ("source") list ONCE for the whole sync — previously
+    // this ran once per sprint tab (3x the API calls for the same data). Also fetch
+    // the backlog-candidates data used by the Planning tab. allSettled so a failure
+    // in either doesn't take down the other.
+    const [sourceTasksResult, blResult] = await Promise.allSettled([
+      fetchSourceListsTasks(sourceListIds),
+      fetchListTasks(BACKLOG_LIST_ID),
+    ]);
+    const sourceTasks = sourceTasksResult.status === 'fulfilled' ? sourceTasksResult.value : [];
+    if (sourceTasksResult.status === 'rejected') console.warn('[Ruyi] source list scan failed:', sourceTasksResult.reason?.message);
+    cachedBlTasks = blResult.status === 'fulfilled' ? blResult.value : [];
 
-    // 4. Render each panel
+    // 3b. Fetch each sprint slot's own tasks in parallel, reusing sourceTasks above.
+    // allSettled so one bad sprint list doesn't blank every other tab.
+    const taskResults = await Promise.allSettled(sprintSlots.map(s => fetchSprintTasks(s.id, sourceTasks)));
+
+    // 4. Render each panel — a per-slot failure shows a scoped error in just that
+    // tab instead of wiping out tabs that loaded fine.
+    let failedCount = 0;
     sprintSlots.forEach((s, i) => {
       const panelId = `panel-${i}`;
-      const tasks   = taskArrays[i] || [];
-      const prevTasks = i > 0 ? taskArrays[i-1] : [];
+      const result = taskResults[i];
+      if (result.status !== 'fulfilled') {
+        failedCount++;
+        console.error(`[Ruyi] ${s.name} failed to load:`, result.reason);
+        const el = document.getElementById(panelId);
+        if (el) el.innerHTML = `<div class="error-banner">❌ Failed to load ${escapeHtml(s.name)}: ${escapeHtml(result.reason?.message || 'unknown error')}</div>`;
+        return;
+      }
+      const tasks = result.value || [];
+      const prevResult = i > 0 ? taskResults[i-1] : null;
+      const prevTasks = prevResult && prevResult.status === 'fulfilled' ? prevResult.value : [];
       cachedTasks[panelId] = tasks;
       if (s.role === 'review')   renderReview(panelId, s, tasks);
       if (s.role === 'active')   renderActive(panelId, s, tasks);
-      if (s.role === 'planning') renderPlanning(panelId, s, tasks, prevTasks, blTasks);
+      if (s.role === 'planning') renderPlanning(panelId, s, tasks, prevTasks, cachedBlTasks);
     });
 
     syncedAt = new Date();
-    document.getElementById('last-synced').textContent = `Synced ${fmtTime(syncedAt)}`;
+    document.getElementById('last-synced').textContent = failedCount
+      ? `⚠️ Synced ${fmtTime(syncedAt)} (${failedCount} tab${failedCount>1?'s':''} failed)`
+      : `Synced ${fmtTime(syncedAt)}`;
   } catch(e) {
     console.error('Sync failed:', e);
     document.getElementById('last-synced').textContent = '⚠️ Sync failed';
     document.getElementById('panels-container').innerHTML =
-      `<div class="error-banner">❌ Sync failed: ${e.message}<br><small>Check that CLICKUP_API_KEY is set in Vercel environment variables.</small></div>`;
+      `<div class="error-banner">❌ Sync failed: ${escapeHtml(e.message)}<br><small>Check that CLICKUP_API_KEY is set in Vercel environment variables.</small></div>`;
   } finally {
     btn.disabled = false;
     btn.classList.remove('spinning');
