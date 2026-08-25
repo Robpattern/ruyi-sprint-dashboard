@@ -188,7 +188,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       <div class="sub" id="header-sub">Loading sprints…</div>
     </div>
     <div class="header-right">
-      <span style="font-size:9px;color:#cbd5e1;margin-right:8px">v5-autoscan</span>
+      <span style="font-size:9px;color:#cbd5e1;margin-right:8px">v6-closedfix</span>
       <span class="last-synced" id="last-synced">Never synced</span>
       <button class="sync-btn" id="sync-btn" onclick="syncNow()">
         <span class="sync-icon" id="sync-icon">↻</span> Sync
@@ -217,8 +217,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 const RUYI_FOLDER_ID  = '90172589900';
 const BACKLOG_LIST_ID = '901705110942';
 
-// ⬇️ Update this each sprint — overrides date-based auto-detection
-const CURRENT_SPRINT_ID = '901714732266'; // Sprint 13
+// Left null on purpose: date-based auto-detection (today falls between a sprint's
+// start/end dates) picks the active sprint automatically so this never goes stale.
+// Set to a specific list ID only if you need to force an override temporarily.
+const CURRENT_SPRINT_ID = null;
 
 // Extra task IDs to always fetch for specific sprint lists (multi-list tasks missing from view)
 const SPRINT_EXTRA_IDS = {
@@ -240,22 +242,10 @@ const SPRINT_EXTRA_IDS = {
     'ATECH-7560',      // Vincent: JD Product List API Integration & Conflict Detection
     'ATECH-7628',      // Ryan + Leo: Bid & bid-history read API for JD Keywords dashboard
   ],
-  '901714732266': [   // Sprint 13 (7/29-8/11): multi-listed tasks missing from list API
-    'ATECH-10973',
-    'ATECH-10972',
-    'ATECH-10980',
-    'ATECH-10989',
-    'ATECH-10992',
-    'ATECH-10979',
-    'ATECH-10994',
-    'ATECH-7629',
-    'ATECH-7560',
-    'ATECH-6488',
-    'ATECH-7563',
-    'ATECH-7565',
-    'ATECH-7793',
-    'ATECH-7436',
-  ],
+  // Sprint 13 entries removed: the auto-scan (fetchMultiListedFromSources, using
+  // ClickUp's `locations` field) now covers these automatically, and several of
+  // the IDs previously hardcoded here had since been re-carried into Sprint 14 —
+  // hardcoding them would have shown stale/wrong data going forward.
 };
 const TEAM_ID = '2323726';
 
@@ -510,10 +500,12 @@ async function fetchViewTasks(viewId) {
   return all;
 }
 
-async function fetchListTasks(listId, includeClosed = false) {
+async function fetchListTasks(listId, includeClosed = false, includeSubtasks = false) {
   let all = [], page = 0, last = 100;
   while (last === 100 && page < 10) {
-    const d = await api(`/v2/list/${listId}/task`, { include_closed: includeClosed, page });
+    const params = { include_closed: includeClosed, page };
+    if (includeSubtasks) params.subtasks = true;
+    const d = await api(`/v2/list/${listId}/task`, params);
     all = all.concat(d.tasks || []);
     last = (d.tasks||[]).length;
     page++;
@@ -532,7 +524,7 @@ const SOURCE_LISTS = [BACKLOG_LIST_ID];
 
 async function fetchMultiListedFromSources(sprintListId) {
   const results = await Promise.allSettled(
-    SOURCE_LISTS.map(id => fetchListTasks(id, true))
+    SOURCE_LISTS.map(id => fetchListTasks(id, true, true))
   );
   const matched = [];
   results.forEach(r => {
@@ -587,10 +579,14 @@ async function fetchSprintTasks(listId) {
   //  2. The list API (home tasks)
   //  3. Known source/backlog lists, filtered to tasks multi-listed into this sprint (root-cause fix — automatic)
   // Use allSettled so a failure in any one source never blocks the others.
+  // include_closed:true is essential here — a sprint's own DONE/Closed tasks
+  // are exactly what the dashboard needs to compute completed points and %
+  // complete. Excluding them (the old default) silently dropped anyone whose
+  // sprint work had already been marked Closed, undercounting their points.
   const viewId = await getBoardViewId(listId);
   const [viewResult, listResult, multiListedResult] = await Promise.allSettled([
     viewId ? fetchViewTasks(viewId) : Promise.resolve([]),
-    fetchListTasks(listId),
+    fetchListTasks(listId, true, true),
     fetchMultiListedFromSources(listId),
   ]);
 
