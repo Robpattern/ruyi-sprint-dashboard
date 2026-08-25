@@ -188,7 +188,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       <div class="sub" id="header-sub">Loading sprints…</div>
     </div>
     <div class="header-right">
-      <span style="font-size:9px;color:#cbd5e1;margin-right:8px">v6-closedfix</span>
+      <span style="font-size:9px;color:#cbd5e1;margin-right:8px">v7-datefix</span>
       <span class="last-synced" id="last-synced">Never synced</span>
       <button class="sync-btn" id="sync-btn" onclick="syncNow()">
         <span class="sync-icon" id="sync-icon">↻</span> Sync
@@ -447,6 +447,7 @@ function parseSprintDates(name) {
   const endYr   = m[6] ? (parseInt(m[6]) < 100 ? 2000 + parseInt(m[6]) : parseInt(m[6])) : startYr;
   let start = new Date(startYr, parseInt(m[1])-1, parseInt(m[2]));
   let end   = new Date(endYr,   parseInt(m[4])-1, parseInt(m[5]));
+  end.setHours(23, 59, 59, 999); // end date is inclusive through the last moment of that day
   // If both parsed to this year and end appears to be before start (year boundary), bump end
   if (end < start) end.setFullYear(end.getFullYear() + 1);
   // If end is >5 months ago relative to now, assume next year
@@ -675,7 +676,7 @@ function pickDisplaySprints(allSprints) {
     const ui = allSprints.indexOf(upcoming);
     return [
       ui > 1 ? { ...allSprints[ui-2], role: 'review' } : null,
-      { ...allSprints[ui-1], role: 'review' },
+      ui > 0 ? { ...allSprints[ui-1], role: 'review' } : null,
       { ...upcoming, role: 'planning' },
     ].filter(Boolean);
   }
@@ -688,8 +689,9 @@ function pickDisplaySprints(allSprints) {
 const RETRO_TAB_IDX = -1; // sentinel for the retro tab
 
 function buildTabs(slots) {
+  slots = slots.filter(Boolean); // defensive: drop any malformed/undefined slot
   const labels = slots.map(s => {
-    const n = s.name.match(/Sprint (\d+)/i)?.[1] || '?';
+    const n = (s.name||'').match(/Sprint (\d+)/i)?.[1] || '?';
     return s.role === 'review' ? `Sprint ${n} Review`
          : s.role === 'active' ? `Sprint ${n} Active`
          : `Sprint ${n} Planning`;
