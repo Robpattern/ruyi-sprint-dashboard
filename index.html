@@ -188,7 +188,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       <div class="sub" id="header-sub">Loading sprints…</div>
     </div>
     <div class="header-right">
-      <span style="font-size:9px;color:#cbd5e1;margin-right:8px">v8-qahardening</span>
+      <span style="font-size:9px;color:#cbd5e1;margin-right:8px">v9-stalefilter</span>
       <span class="last-synced" id="last-synced">Never synced</span>
       <button class="sync-btn" id="sync-btn" onclick="syncNow()">
         <span class="sync-icon" id="sync-icon">↻</span> Sync
@@ -647,7 +647,7 @@ async function getBoardViewId(listId) {
   return null;
 }
 
-async function fetchSprintTasks(listId, sourceTasks) {
+async function fetchSprintTasks(listId, sourceTasks, sprintStart) {
   // Fetch from all three sources in parallel:
   //  1. The board view, if one exists (catches multi-listed tasks ClickUp's own board renders)
   //  2. The list API (home tasks)
@@ -700,7 +700,24 @@ async function fetchSprintTasks(listId, sourceTasks) {
   // Remove parent "container" tasks whose children are also in the result
   // (board views sometimes include the parent when a subtask is in the sprint)
   const childParentIds = new Set(base.filter(t => t.parent).map(t => t.parent));
-  return base.filter(t => !childParentIds.has(t.id));
+  const deduped = base.filter(t => !childParentIds.has(t.id));
+
+  // Drop anything closed before this sprint even started. ClickUp's `subtasks:true`
+  // list-task fetch returns every subtask under any parent whose CURRENT home is
+  // this list — including subtasks closed months earlier, under a long-lived parent
+  // epic that ClickUp administratively re-homes over time. Those are real, valid,
+  // already-finished tasks, just not *this sprint's* work — including them made the
+  // "Active" tab balloon with old finished tickets that have nothing to do with the
+  // current 2-week window. A task's own `date_closed` is unambiguous regardless of
+  // which list ClickUp currently considers it to live in, so filter on that instead
+  // of trusting "home list" for closed items.
+  if (!sprintStart) return deduped;
+  const startMs = sprintStart.getTime();
+  return deduped.filter(t => {
+    if (!isDone(getStatus(t))) return true; // never filter open/in-progress/blocked work
+    const closedMs = t.date_closed ? Number(t.date_closed) : null;
+    return closedMs == null || closedMs >= startMs;
+  });
 }
 
 /* ══════════════════════════════════════════
@@ -1390,7 +1407,7 @@ async function syncNow() {
 
     // 3b. Fetch each sprint slot's own tasks in parallel, reusing sourceTasks above.
     // allSettled so one bad sprint list doesn't blank every other tab.
-    const taskResults = await Promise.allSettled(sprintSlots.map(s => fetchSprintTasks(s.id, sourceTasks)));
+    const taskResults = await Promise.allSettled(sprintSlots.map(s => fetchSprintTasks(s.id, sourceTasks, s.start)));
 
     // 4. Render each panel — a per-slot failure shows a scoped error in just that
     // tab instead of wiping out tabs that loaded fine.
