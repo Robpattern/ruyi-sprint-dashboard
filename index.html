@@ -188,7 +188,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       <div class="sub" id="header-sub">Loading sprints…</div>
     </div>
     <div class="header-right">
-      <span style="font-size:9px;color:#cbd5e1;margin-right:8px">v4-retro</span>
+      <span style="font-size:9px;color:#cbd5e1;margin-right:8px">v5-autoscan</span>
       <span class="last-synced" id="last-synced">Never synced</span>
       <button class="sync-btn" id="sync-btn" onclick="syncNow()">
         <span class="sync-icon" id="sync-icon">↻</span> Sync
@@ -483,38 +483,66 @@ async function api(path, params = {}, method = 'GET', body = null) {
   return r.json();
 }
 
+// Fetch full detail (with subtasks) for a batch of task stubs, rolling up subtask
+// points onto the parent when the parent itself has no points set (matches what
+// the ClickUp UI displays).
+async function fetchDetailedWithRollup(taskStubs) {
+  const detailed = await Promise.allSettled(taskStubs.map(t => api(`/v2/task/${t.id}`, { include_subtasks: true })));
+  return detailed.filter(r=>r.status==='fulfilled'&&r.value?.id).map(r => {
+    const task = r.value;
+    if ((task.points == null) && task.subtasks?.length) {
+      const rollup = task.subtasks.reduce((s, sub) => s + (Number(sub.points) || 0), 0);
+      if (rollup > 0) task.points = rollup;
+    }
+    return task;
+  });
+}
+
 async function fetchViewTasks(viewId) {
   let all = [], page = 0, last = 100;
   while (last === 100 && page < 10) {
     const d = await api(`/v2/view/${viewId}/task`, { page });
     const batch = d.tasks || [];
-    // Fetch detailed version (with subtasks) to get points
-    const detailed = await Promise.allSettled(batch.map(t => api(`/v2/task/${t.id}`, { include_subtasks: true })));
-    const good = detailed.filter(r=>r.status==='fulfilled'&&r.value?.id).map(r => {
-      const task = r.value;
-      // Roll up subtask points when parent has no points set (ClickUp UI shows rollup)
-      if ((task.points == null) && task.subtasks?.length) {
-        const rollup = task.subtasks.reduce((s, sub) => s + (Number(sub.points) || 0), 0);
-        if (rollup > 0) task.points = rollup;
-      }
-      return task;
-    });
-    all = all.concat(good);
+    all = all.concat(await fetchDetailedWithRollup(batch));
     last = batch.length;
     page++;
   }
   return all;
 }
 
-async function fetchListTasks(listId) {
+async function fetchListTasks(listId, includeClosed = false) {
   let all = [], page = 0, last = 100;
   while (last === 100 && page < 10) {
-    const d = await api(`/v2/list/${listId}/task`, { include_closed: false, page });
+    const d = await api(`/v2/list/${listId}/task`, { include_closed: includeClosed, page });
     all = all.concat(d.tasks || []);
     last = (d.tasks||[]).length;
     page++;
   }
   return all;
+}
+
+// Root-cause fix for multi-listed tasks: when a task is created in a "home" list
+// (e.g. AdTech Backlog) and then added to a sprint list via "Add to List", the
+// sprint's own /list/{id}/task endpoint never sees it — only the task's home list
+// does. ClickUp DOES report the extra membership on each task's `locations` array
+// in the bulk list-task response, so we scan every known source/backlog list and
+// pull out any task whose `locations` includes the target sprint list. This means
+// new sprints pick up multi-listed tasks automatically — no manual ID list needed.
+const SOURCE_LISTS = [BACKLOG_LIST_ID];
+
+async function fetchMultiListedFromSources(sprintListId) {
+  const results = await Promise.allSettled(
+    SOURCE_LISTS.map(id => fetchListTasks(id, true))
+  );
+  const matched = [];
+  results.forEach(r => {
+    if (r.status !== 'fulfilled') return;
+    r.value.forEach(t => {
+      if ((t.locations || []).some(loc => loc.id === sprintListId)) matched.push(t);
+    });
+  });
+  // Re-fetch with subtask rollup so points display consistently with view-sourced tasks
+  return fetchDetailedWithRollup(matched);
 }
 
 // In-memory cache: listId → viewId
@@ -554,15 +582,19 @@ async function getBoardViewId(listId) {
 }
 
 async function fetchSprintTasks(listId) {
-  // Fetch from BOTH the board view (catches multi-listed tasks where a view exists)
-  // AND the list API. Use allSettled so a bad view never blocks list tasks.
+  // Fetch from all three sources in parallel:
+  //  1. The board view, if one exists (catches multi-listed tasks ClickUp's own board renders)
+  //  2. The list API (home tasks)
+  //  3. Known source/backlog lists, filtered to tasks multi-listed into this sprint (root-cause fix — automatic)
+  // Use allSettled so a failure in any one source never blocks the others.
   const viewId = await getBoardViewId(listId);
-  const [viewResult, listResult] = await Promise.allSettled([
+  const [viewResult, listResult, multiListedResult] = await Promise.allSettled([
     viewId ? fetchViewTasks(viewId) : Promise.resolve([]),
     fetchListTasks(listId),
+    fetchMultiListedFromSources(listId),
   ]);
 
-  let viewTasks = [], listTasks = [];
+  let viewTasks = [], listTasks = [], multiListedTasks = [];
   if (viewResult.status === 'fulfilled') {
     viewTasks = viewResult.value;
     // If the view returned 0 tasks but we know it exists, it may be a stale/empty cached ID
@@ -572,15 +604,17 @@ async function fetchSprintTasks(listId) {
     _clearViewCache(listId);
   }
   if (listResult.status === 'fulfilled') listTasks = listResult.value;
+  if (multiListedResult.status === 'fulfilled') multiListedTasks = multiListedResult.value;
+  else console.warn('Multi-listed source scan failed:', multiListedResult.reason?.message);
 
   const seen = new Set();
-  const base = [...viewTasks, ...listTasks].filter(t => {
+  const base = [...viewTasks, ...listTasks, ...multiListedTasks].filter(t => {
     if (seen.has(t.id)) return false;
     seen.add(t.id);
     return true;
   });
 
-  // Supplement with any known extra tasks for this sprint (multi-list tasks missing from view)
+  // Manual fallback for historical sprints / edge cases not covered by the automatic scan above
   const extraIds = SPRINT_EXTRA_IDS[listId] || [];
   if (extraIds.length) {
     const existing = new Set(base.map(t => t.custom_id));
